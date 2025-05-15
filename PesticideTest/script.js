@@ -182,7 +182,7 @@ analyzeBtn.addEventListener('click', async function () {
     analyzeBtn.disabled = true;
 
     analyzingOverlay.style.display = 'flex'; //  顯示提示條
-    await toggleTorch(true);
+    //await toggleTorch(true);
 
     // 立刻顯示
     const color1 = getAverageColor(redBox1);
