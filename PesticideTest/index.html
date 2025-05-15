@@ -1,0 +1,111 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>攝像頭顏色分析</title>
+    <link rel="stylesheet" href="styles.css">
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.17.0/xlsx.full.min.js"></script>
+</head>
+<body>
+
+<div class="TopImage">
+    <img src="images/TopImage.png" alt="Top Image" style="width: 100%; height: 100px; object-fit: contain; display: block;">
+</div>
+<div class="header">
+    <h2>農藥抑制率分析</h2>
+    <button id="startBtn">光源訊號確認</button>
+</div>
+
+    <div class="container">
+        <video id="camera" autoplay playsinline muted></video>
+
+        <!-- 紅框部分 -->
+        <div id="redBox1" class="redBox">
+            <span class="boxLabel">空白組</span>
+        </div>
+        <div id="redBox2" class="redBox">
+            <span class="boxLabel">樣品組</span>
+        </div>
+    </div>
+
+    <!-- 按鈕放 container 外部 -->
+    <div class="button-group">
+        <button id="backBtn">返回上一頁</button>
+        <button id="showStepsBtn">查看步驟</button>
+        <button id="analyzeBtn">開始分析</button>
+        <button id="stopBtn" style="display:none;">停止分析</button>
+    </div>
+            <!-- 分析中提示條 -->
+    <div id="analyzingOverlay" class="inline-hint vertical" style="display: none;">
+        <div class="spinner-inline"></div>
+        <span style="margin-left: 10px;">正在分析中…</span>
+    </div>
+    <p id="result"></p>
+    <script src="script.js"></script>
+
+<script>
+document.getElementById('showStepsBtn').addEventListener('click', () => {
+    document.getElementById('stepsModal').style.display = 'block';
+});
+
+</script>
+
+
+
+<div id="stepsModal" class="modal">
+  <div class="modal-content">
+    <span class="close-button" id="closeStepsBtn">&times;</span>
+    <div class="modal-steps">
+        <h3 style="text-align:center; color:#2c5f2d;">實驗步驟</h3>
+        <ol style="text-align: left;">
+          <li>在小瓶子中加滿酒精。</li>
+          <li>用吸管切分蔬果樣品。</li>
+          <li>將蔬果樣品放進酒精中。</li>
+          <li>將小瓶子搖晃 20 秒後靜置 3 分鐘。</li>
+          <li>取出兩根塑膠小管放入白色架中，在左邊的那一管加入一滴酒精蔬果液。</li>
+          <li>手機架好並使其紅框對準白色架中的兩根小管。</li>
+          <li>樣品組紅框對準滴入蔬果浸泡液的小管；空白組對準沒滴入的。</li>
+          <li>在大瓶子中加入3毫升水。</li>
+          <li>取出一根酵素棒放進水中混合成酵素液。</li>
+          <li>將酵素液在兩個小管中分別加入一半。</li>
+          <li>按下開始分析並等待結果。</li>
+        </ol>
+    </div>
+  </div>
+</div>
+
+</div>
+
+<script>
+if (stopBtn) stopBtn.disabled = true;
+    
+document.getElementById('backBtn').addEventListener('click', () => {
+    if (document.referrer && document.referrer !== location.href) 
+    {
+        window.history.back();
+    } 
+    else
+    {
+        window.location.href = 'intro.html'; 
+    }
+});
+
+document.getElementById('showStepsBtn').addEventListener('click', () => {
+    document.getElementById('stepsModal').style.display = 'block';
+});
+document.getElementById('closeStepsBtn').addEventListener('click', () => {
+    document.getElementById('stepsModal').style.display = 'none';
+});
+window.addEventListener('click', (event) => {
+    const modal = document.getElementById('stepsModal');
+    if (event.target === modal) {
+        modal.style.display = 'none';
+    }
+});
+</script>
+
+<div id="version" class="version-display">版本號: v1.514.1350-sw</div>
+
+</body>
+</html>
