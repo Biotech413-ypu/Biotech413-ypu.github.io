@@ -18,7 +18,7 @@ if (rateRaw === null) {
     document.getElementById("statusText").textContent = "未接收到資料";
     document.getElementById("statusText").style.color = "#999";
 } 
-else if ( percent < -5 || percent > 100) {
+else if ( percent < -10 || percent > 100) {
     document.getElementById("percentText").textContent = "檢測率異常";
     document.getElementById("fgCircle").style.stroke = "#ccc";
     document.getElementById("statusText").textContent = "請檢查數據";
@@ -28,7 +28,7 @@ else
 {
     localStorage.removeItem("rate");
     
-     if ( percent < 0 && percent >= -5 ) {
+     if ( percent < 0 && percent >= -10 ) {
         percent = 0 ;
     }
     // 判斷等級與顏色
