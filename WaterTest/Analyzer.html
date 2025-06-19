@@ -1,0 +1,39 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>水質檢測</title>
+    <link rel="stylesheet" href="AnalyzerUI.css">
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.17.0/xlsx.full.min.js"></script>
+    <script src="AnalyzerSW.js" defer></script>
+</head>
+
+<body>
+
+<div class="header">
+    <h1>水質檢測分析</h1>
+</div>
+
+<div class="container">
+    <video id="camera" autoplay playsinline muted></video>
+    <div id="redBox1" class="redBox">
+    <div id="boxLabel" class="label">請選取檢測項目</div>
+    </div>
+</div>
+
+<div class="button-group">
+    <div class="row">
+        <button id="btnPH">酸鹼值</button>
+        <button id="btnOxygen">溶氧量</button>
+        <button id="btnTurbidity">濁度</button>
+    </div>
+    <div class="row">
+        <button id="analyzeBtn">開始分析</button>
+    </div>
+</div>
+
+<p id="result"></p>
+
+</body>
+</html>

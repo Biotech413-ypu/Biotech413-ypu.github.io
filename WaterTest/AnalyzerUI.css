@@ -1,0 +1,153 @@
+/* --- 全域畫面控制 --- */
+html, body {
+    margin: 0;
+    padding: 0;
+    height: 100%;
+    touch-action: none;          /* 禁止手指滑動造成整頁滾動 */
+    overscroll-behavior: contain;
+    font-family: 'Segoe UI', sans-serif;
+    background: #f7fff5;
+    color: #333;
+    text-align: center;
+}
+
+/* --- 頁首圖與文字 --- */
+.TopImage {
+    width: 100vw;
+    height: 100px;
+    overflow: hidden;
+}
+
+.TopImage img {
+    width: 100%;
+    height: 100px;
+    object-fit: contain;
+    display: block;
+}
+
+.header {
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    flex-wrap: wrap;
+}
+
+.header h1 {
+    font-size: 32px;
+    margin-bottom: 20px;
+}
+
+/* --- 主容器 --- */
+.container {
+    position: relative;
+    display: inline-block;
+    width: 100%;
+    max-width: 600px;
+}
+
+/* --- 攝影畫面與限制高度 --- */
+#camera {
+    width: 100%;
+    max-width: 800px;
+    aspect-ratio: 4 / 3;
+    object-fit: contain;
+    background-color: black;
+    display: block;
+    margin: 0 auto;
+    border: 1px solid #ccc;
+}
+
+/* --- 紅框區塊 --- */
+.redBox {
+    position: absolute;
+    pointer-events: auto;
+    border: 5px solid rgb(255, 255, 255);
+    width: 50px;
+    height: 50px;
+    border-radius: 999%;
+    cursor: move;
+    z-index: 10;
+}
+
+/* 文字標籤 */
+.redBox .label {
+    position: absolute;
+    top: -40px;             /* 把文字移到框上方 */
+    left: 50%;
+    transform: translateX(-50%);
+    background-color: rgba(255, 255, 255, 0.8);
+    color: #333;
+    padding: 2px 6px;
+    font-size: 14px;
+    border-radius: 4px;
+    white-space: nowrap;
+    text-align: center;
+}
+
+#redBox1 {
+    top: 175px;
+    left: 250px;
+}
+
+.redBox.fixed {
+    pointer-events: none;
+}
+
+
+/* 分析結果顯示 */
+#result {
+    margin-top: 10px;
+    font-size: 16px;
+}
+
+/* 按鈕通用樣式 */
+button {
+    color: white;
+    border: none;
+    border-radius: 6px;
+    margin: 10px 5px;
+    padding: 10px 20px;
+    font-size: 16px;
+    cursor: pointer;
+    transition: background-color 0.3s ease;
+}
+
+.row {
+    margin: 5px 0;
+}
+
+/* --- PH 按鈕（藍色）--- */
+#btnPH {
+    background-color: #2196F3; /* 藍色 */
+}
+#btnPH:hover {
+    background-color: #1976D2;
+}
+
+/* --- 溶氧量 按鈕（綠色）--- */
+#btnOxygen {
+    background-color: #4CAF50; /* 綠色 */
+}
+#btnOxygen:hover {
+    background-color: #388E3C;
+}
+
+/* --- 濁度 按鈕（橘色）--- */
+#btnTurbidity {
+    background-color: #FF9800; /* 橘色 */
+}
+#btnTurbidity:hover {
+    background-color: #EF6C00;
+}
+
+/* --- 分析 按鈕（色）--- */
+#analyzeBtn {
+    background-color: #f9f591; /* 色 */
+    color: black;
+}
+#analyzeBtn:hover {
+    background-color: #c1c168;
+}
+
+
+
