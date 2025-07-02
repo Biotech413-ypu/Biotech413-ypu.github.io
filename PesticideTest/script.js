@@ -309,6 +309,16 @@ function updateRedBoxPositions() {
     });
 }
 
+function movingAverage(values, windowSize = 5) {
+    const result = [];
+    for (let i = 0; i <= values.length - windowSize; i++) {
+        const window = values.slice(i, i + windowSize);
+        const avg = window.reduce((sum, val) => sum + val, 0) / window.length;
+        result.push(avg);
+    }
+    return result;
+}
+
 function showQuartiles() {
     // 過濾有效資料
     const validData = logRGBValues.filter(entry =>
@@ -317,13 +327,17 @@ function showQuartiles() {
         !isNaN(parseFloat(entry.slope.b2))
     );
 
-    // 取變化幅度（無論上升或下降）
-    const b1Values = validData.map(entry => Math.abs(parseFloat(entry.slope.b1)));
-    const b2Values = validData.map(entry => Math.abs(parseFloat(entry.slope.b2)));
+    // 不取變化幅度（無論上升或下降）
+    const rawB1 = validData.map(entry => (parseFloat(entry.slope.b1)));
+    const rawB2 = validData.map(entry => (parseFloat(entry.slope.b2)));
+
+    // 使用滑動平均（每5筆）
+    const b1Smoothed = movingAverage(rawB1, 5);
+    const b2Smoothed = movingAverage(rawB2, 5);
 
     // 四分位數統計
-    const b1Stats = calculateQuartiles(b1Values);
-    const b2Stats = calculateQuartiles(b2Values);
+    const b1Stats = calculateQuartiles(b1Smoothed);
+    const b2Stats = calculateQuartiles(b2Smoothed);
 
     // 計算抑制率
     const percentReduction = calculatePercentageReduction(b1Stats, b2Stats);
