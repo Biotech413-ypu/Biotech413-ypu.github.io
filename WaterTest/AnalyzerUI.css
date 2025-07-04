@@ -34,7 +34,13 @@ html, body {
 
 .header h1 {
     font-size: 32px;
-    margin-bottom: 20px;
+    margin-bottom: 30px;
+	color: blue;
+}
+.header h2 {
+    font-size: 24px;
+	margin-bottom: 15px;
+	color: green;
 }
 
 /* --- 主容器 --- */
