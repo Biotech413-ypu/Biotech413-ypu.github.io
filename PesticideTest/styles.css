@@ -138,18 +138,16 @@ html, body {
 
 .boxLabel-bottom {
     position: absolute;
-    bottom: -22px;
-    left: -15px;
-    transform: rotate(90deg);
-    transform-origin: left center;
+    top: 50%;
+    left: calc(100% + 4px);
+    transform: translateY(-50%) rotate(180deg);
     font-size: 10px;
     color: yellow;
     background-color: rgba(100, 50, 100, 0.7);
     padding: 2px 5px;
     border-radius: 3px;
     text-align: center;
-    writing-mode: vertical-rl;
-    transform: rotate(180deg);
+    white-space: nowrap;
 }
 
 /* 分析結果顯示 */
