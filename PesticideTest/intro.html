@@ -1,4 +1,3 @@
-
 <!DOCTYPE html>
 <html lang="zh-TW">
 <head>
@@ -162,9 +161,9 @@
         </div>
         <ol>
             <li>取出兩根檢測管放入白色檢測座中</li> 
-            <li>樣品組的檢測管加入3-4滴做好的蔬果液(50% 農藥測試管改滴75%酒精)</li>
+            <li>A組的檢測管加入3-4滴做好的蔬果液(50% 農藥測試管改滴75%酒精)</li>
             <li>將手機架好並移動紅框使其對準白色檢測座中的兩根檢測管</li>
-            <li>樣品組紅框對準滴入蔬果液的檢測管；空白組對準未滴入任何樣品的檢測管</li>
+            <li>A組紅框對準A組的檢測管；B組對準B組的檢測管</li>
             <li>按下<b>光源訊號確認</b>查看空白組與樣品組的第三個數值(B)，確認其值大於150且相差不大於15</li>
         </ol>
     </li>
@@ -189,11 +188,53 @@
 
 
 
-<a class="start-btn" href="index.html">開始分析</a>
+<div style="margin: 20px auto; max-width: 300px;">
+  <input type="text" id="nicknameInput" placeholder="請輸入暱稱"
+    style="width: 100%; padding: 12px; font-size: 16px; border: 2px solid #6ab04c;
+    border-radius: 8px; text-align: center; box-sizing: border-box;">
+</div>
+<a class="start-btn" href="#" id="startAnalysisBtn">開始分析</a>
+<script>
+  document.getElementById('startAnalysisBtn').addEventListener('click', function(e) {
+    e.preventDefault();
+    const nickname = document.getElementById('nicknameInput').value.trim();
+    if (!nickname) {
+      alert('請先輸入暱稱！');
+      return;
+    }
+    localStorage.setItem('nickname', nickname);
+    window.location.href = 'index.html';
+  });
+</script>
     </div>
 
     
 </body>
+<div style="
+  max-width: 700px;
+  margin: 20px auto 30px auto;
+  padding: 16px 20px;
+  background: #f0fff0;
+  border: 1px solid #cdeac0;
+  border-radius: 10px;
+  font-size: 13px;
+  color: #555;
+  line-height: 1.8;
+  text-align: left;
+">
+  <p style="font-weight: bold; color: #2c5f2d; margin-bottom: 8px;">📋 資料收集聲明</p>
+  <p>
+    本系統將於分析過程中自動收集以下資訊：<br>
+    • 輸入之暱稱與裝置型號<br>
+    • 攝像頭擷取之 RGB 色彩數據<br>
+    • 分析時間與農藥抑制率計算結果
+  </p>
+  <p style="margin-top: 8px;">
+    上述資料僅供本研究團隊進行學術研究分析使用，不會對外公開或用於商業目的。
+    使用本系統即代表您同意上述資料收集方式。
+    如有疑問請聯繫研究團隊。
+  </p>
+</div>
 <div class="footer-image">
     <img src="images/seal.png" alt="USR Hub" style="width: 100%; height: auto; display: block; border-radius: 8px;">
 </div>

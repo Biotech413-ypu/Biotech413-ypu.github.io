@@ -1,3 +1,54 @@
+const GOOGLE_SHEET_URL = "https://script.google.com/macros/s/AKfycbyv_uizvx2puwqLCBI2Nye7U9U6JREbm0fMg6mQ_1pEXT2vJ4Ht8OwfRHIHUxolIu1e0g/exec";
+
+async function uploadToGoogleSheets(data) {
+    const url = GOOGLE_SHEET_URL + "?t=" + Date.now();
+    try {
+        await fetch(url, {
+            method: "POST",
+            mode: "no-cors",
+            body: JSON.stringify(data)
+            // 不加 Content-Type
+        });
+    } catch (err) {
+        console.error("上傳失敗:", err);
+    }
+}
+
+function getDeviceInfo() {
+    const ua = navigator.userAgent;
+
+    // iOS 裝置
+    if (/iPhone/.test(ua)) {
+        const match = ua.match(/OS (\d+[_\d]*)/);
+        const ver = match ? match[1].replace(/_/g, '.') : '';
+        return `iPhone iOS ${ver}`;
+    }
+    if (/iPad/.test(ua)) {
+        const match = ua.match(/OS (\d+[_\d]*)/);
+        const ver = match ? match[1].replace(/_/g, '.') : '';
+        return `iPad iOS ${ver}`;
+    }
+
+    // Android 裝置
+    if (/Android/.test(ua)) {
+        const verMatch = ua.match(/Android ([\d.]+)/);
+        const ver = verMatch ? verMatch[1] : '';
+
+        // 抓品牌名稱
+        const brandMatch = ua.match(/\b(Samsung|Xiaomi|OPPO|vivo|Huawei|Pixel|OnePlus|ASUS|Sony|LG|Motorola|Realme|Nokia|HTC)\b/i);
+        const brand = brandMatch ? brandMatch[1] : 'Android裝置';
+
+        return `${brand} Android ${ver}`;
+    }
+
+    // 電腦
+    if (/Windows/.test(ua)) return 'Windows PC';
+    if (/Macintosh/.test(ua)) return 'Mac';
+    if (/Linux/.test(ua)) return 'Linux';
+
+    return ua.substring(0, 60);
+}
+
 const video = document.getElementById('camera');
 const analyzeBtn = document.getElementById('analyzeBtn');
 const stopBtn = document.getElementById('stopBtn');
@@ -181,10 +232,8 @@ analyzeBtn.addEventListener('click', async function () {
     stopBtn.disabled = false;
     analyzeBtn.disabled = true;
 
-    analyzingOverlay.style.display = 'flex'; //  顯示提示條
-    //await toggleTorch(true);
+    analyzingOverlay.style.display = 'flex';
 
-    // 立刻顯示
     const color1 = getAverageColor(redBox1);
     const color2 = getAverageColor(redBox2);
 
@@ -233,7 +282,7 @@ analyzeBtn.addEventListener('click', async function () {
             analyzeBtn.disabled = false;
             stopBtn.disabled = true;
             toggleTorch(false);
-            analyzingOverlay.style.display = 'none'; // 分析結束隱藏
+            analyzingOverlay.style.display = 'none';
             showQuartiles();
         }
     }, 2000);
@@ -256,42 +305,52 @@ function toggleTorch(on) {
 startCamera();
 makeDraggable(redBox1);
 makeDraggable(redBox2);
+
 //20250514
 document.getElementById('startBtn').addEventListener('click', async () => {
     await startCamera();
-     // 更新紅框位置
     video.onloadeddata = () => {
         updateRedBoxPositions();
 
-        // 抓取紅框 RGB 值
         const color1 = getAverageColor(redBox1);
         const color2 = getAverageColor(redBox2);
 
-        // 顯示在 result 區塊
         result.innerHTML = `
             空白組 RGB: (${color1.r.toFixed(3)}, ${color1.g.toFixed(3)}, ${color1.b.toFixed(3)})<br>
             樣品組 RGB: (${color2.r.toFixed(3)}, ${color2.g.toFixed(3)}, ${color2.b.toFixed(3)})<br>
         `;
     };
-    });    
+});
 //20250514
-   
-function calculatePercentageReduction(b1Stats, b2Stats) {
-    function safePercent(qB1, qB2) {
-        const n1 = parseFloat(qB1);
-        const n2 = parseFloat(qB2);
-        if (n1 === 0) return null;
-        return (1 - (n2 / n1)) * 100;
-    }
 
-    const q1Raw = safePercent(b1Stats.q1, b2Stats.q1);
-    const q2Raw = safePercent(b1Stats.q2, b2Stats.q2);
-    const avg = (q1Raw != null && q2Raw != null) ? ((q1Raw + q2Raw) / 2).toFixed(2) + "%" : "N/A";
+function calculatePercentageReduction(b1Stats, b2Stats, rgbRatio = 1) {
+     function safePercent(qB1, qB2) {
+         const n1 = parseFloat(qB1);
+         const n2 = parseFloat(qB2);
+          if (n1 === 0) return { value: null, warning: null };
+
+         if (n1 < 0.05 || n2 < 0) return { value: null, warning: "ERROR:酵素活性不足" };
+
+          if (n2 > n1) return { value: (1 - (n1 / n2) * rgbRatio) * 100, warning: "警告:A,B位置可能錯置" };
+
+          return { value: (1 - (n2 / n1) * rgbRatio) * 100, warning: null };
+      }
+
+    const q1Result = safePercent(b1Stats.q1, b2Stats.q1);
+    const q2Result = safePercent(b1Stats.q2, b2Stats.q2);
+
+    // 警告優先取 Q2 的
+    const warning = q2Result.warning || q1Result.warning || null;
+
+    const avg = (q1Result.value != null && q2Result.value != null)
+        ? ((q1Result.value + q2Result.value) / 2).toFixed(2) + "%"
+        : "N/A";
 
     return {
-        q1Percent: q1Raw != null ? q1Raw.toFixed(2) + "%" : "N/A",
-        q2Percent: q2Raw != null ? q2Raw.toFixed(2) + "%" : "N/A",
-        average: avg
+        q1Percent: q1Result.value != null ? q1Result.value.toFixed(2) + "%" : "N/A",
+        q2Percent: q2Result.value != null ? q2Result.value.toFixed(2) + "%" : "N/A",
+        average:   avg,
+        warning:   warning
     };
 }
 
@@ -319,31 +378,90 @@ function movingAverage(values, windowSize = 5) {
     return result;
 }
 
-function showQuartiles() {
-    // 過濾有效資料
+// ── 計算結果並上傳 ──────────────────────────────────────
+async function showQuartiles() {
     const validData = logRGBValues.filter(entry =>
         entry.slope &&
         !isNaN(parseFloat(entry.slope.b1)) &&
         !isNaN(parseFloat(entry.slope.b2))
     );
 
-    // 不取變化幅度（無論上升或下降）
-    const rawB1 = validData.map(entry => (parseFloat(entry.slope.b1)));
-    const rawB2 = validData.map(entry => (parseFloat(entry.slope.b2)));
+    const rawB1 = validData.map(entry => parseFloat(entry.slope.b1));
+    const rawB2 = validData.map(entry => parseFloat(entry.slope.b2));
 
-    // 使用滑動平均（每5筆）
     const b1Smoothed = movingAverage(rawB1, 5);
     const b2Smoothed = movingAverage(rawB2, 5);
 
-    // 四分位數統計
     const b1Stats = calculateQuartiles(b1Smoothed);
     const b2Stats = calculateQuartiles(b2Smoothed);
 
-    // 計算抑制率
-    const percentReduction = calculatePercentageReduction(b1Stats, b2Stats);
+    // 空白組 R、G、B 原始值的 Q2
+    const blankR = logRGBValues.map(e => parseFloat(e.color1.r)).filter(v => !isNaN(v));
+    const blankG = logRGBValues.map(e => parseFloat(e.color1.g)).filter(v => !isNaN(v));
+    const blankB = logRGBValues.map(e => parseFloat(e.color1.b)).filter(v => !isNaN(v));
+
+    const blankRQ2 = parseFloat(calculateQuartiles(blankR).q2);
+    const blankGQ2 = parseFloat(calculateQuartiles(blankG).q2);
+    const blankBQ2 = parseFloat(calculateQuartiles(blankB).q2);
+    const blankSum = blankRQ2 + blankGQ2 + blankBQ2;
+
+    // 樣品組 R、G、B 原始值的 Q2
+    const sampR = logRGBValues.map(e => parseFloat(e.color2.r)).filter(v => !isNaN(v));
+    const sampG = logRGBValues.map(e => parseFloat(e.color2.g)).filter(v => !isNaN(v));
+    const sampB = logRGBValues.map(e => parseFloat(e.color2.b)).filter(v => !isNaN(v));
+
+    const sampRQ2 = parseFloat(calculateQuartiles(sampR).q2);
+    const sampGQ2 = parseFloat(calculateQuartiles(sampG).q2);
+    const sampBQ2 = parseFloat(calculateQuartiles(sampB).q2);
+    const sampSum = sampRQ2 + sampGQ2 + sampBQ2;
+
+    const rgbRatio = (sampSum !== 0) ? blankSum / sampSum : 1;
+
+    const percentReduction = calculatePercentageReduction(b1Stats, b2Stats, rgbRatio);
     const percentResult = percentReduction.average;
 
-    // 儲存並跳轉
-    localStorage.setItem("rate", percentResult);
+    const errorCode = percentReduction.warning || "正常";
+    const now = new Date();
+    const pad = n => String(n).padStart(2, '0');
+    const sheetName = `${now.getFullYear()}-${pad(now.getMonth()+1)}-${pad(now.getDate())}_${pad(now.getHours())}:${pad(now.getMinutes())}`;
+
+    // 先儲存結果
+    localStorage.setItem("rate", percentReduction.q2Percent);
+    localStorage.setItem("errorCode", errorCode);
+
+    // 等上傳完成後再跳轉
+    await uploadToGoogleSheets({
+        sheetName,
+        summary: {
+            nickname:       localStorage.getItem('nickname') || '未填寫',  // ← 加這行
+            device: getDeviceInfo(),
+            time:           now.toLocaleString("zh-TW"),
+            inhibitionRate: percentResult,
+            errorCode:      errorCode,
+            b1Q1:           b1Stats.q1,
+            b1Q2:           b1Stats.q2,
+            b2Q1:           b2Stats.q1,
+            b2Q2:           b2Stats.q2,
+            q1Percent:      percentReduction.q1Percent,
+            q2Percent:      percentReduction.q2Percent,
+            blankRQ2:       blankRQ2.toFixed(3),
+            blankGQ2:       blankGQ2.toFixed(3),
+            blankBQ2:       blankBQ2.toFixed(3),
+            blankSum:       blankSum.toFixed(3),
+            sampRQ2:        sampRQ2.toFixed(3),
+            sampGQ2:        sampGQ2.toFixed(3),
+            sampBQ2:        sampBQ2.toFixed(3),
+            sampSum:        sampSum.toFixed(3),
+            rgbRatio:       rgbRatio.toFixed(5),
+        },
+        rawData: logRGBValues.map(entry => [
+            entry.time,
+            entry.color1.r, entry.color1.g, entry.color1.b,
+            entry.color2.r, entry.color2.g, entry.color2.b,
+            entry.slope ? entry.slope.b1 : "",
+            entry.slope ? entry.slope.b2 : ""
+        ])
+    });
+
     location.href = "Results.html";
 }
