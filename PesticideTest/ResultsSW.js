@@ -31,20 +31,6 @@ else
      if ( percent < 0 && percent >= -10 ) {
         percent = 0 ;
     }
-    // 判斷等級與顏色
-    let color = '';
-    let label = '';
-
-    if (percent <= 35) {
-        color = 'green';
-        label = '合格';
-    } else if (percent <= 45) {
-        color = 'orange';
-        label = '有點危險';
-    } else {
-        color = 'red';
-        label = '不合格';
-    }
 
     const circle = document.getElementById('fgCircle');
     const text = document.getElementById('percentText');
@@ -55,9 +41,7 @@ else
 
     circle.style.strokeDasharray = circumference;
     circle.style.strokeDashoffset = circumference;
-    circle.style.stroke = color;
-    status.textContent = label;
-    status.style.color = color;
+    circle.style.stroke = '#6ab04c';
     // 顯示錯誤碼
     const errorCode = localStorage.getItem("errorCode");
     if (errorCode && errorCode !== "正常") {
