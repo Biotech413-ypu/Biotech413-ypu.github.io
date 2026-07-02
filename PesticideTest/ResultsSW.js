@@ -1,3 +1,21 @@
+const GOOGLE_SHEET_URL = "https://script.google.com/macros/s/AKfycbzjxUWuiQVYlDZ3zdM4An7Rby29H9PYvnxtd8J-SEnEyD6SmKGCl1XYJNDg2UhSxHFG4A/exec";
+
+(async function uploadPending() {
+    const raw = localStorage.getItem("pendingUpload");
+    if (!raw) return;
+    localStorage.removeItem("pendingUpload");
+    try {
+        const data = JSON.parse(raw);
+        await fetch(GOOGLE_SHEET_URL + "?t=" + Date.now(), {
+            method: "POST",
+            mode: "no-cors",
+            body: JSON.stringify(data)
+        });
+    } catch (err) {
+        console.error("上傳失敗:", err);
+    }
+})();
+
 const circle = document.getElementById('fgCircle');
 const text = document.getElementById('percentText');
 const status = document.getElementById('statusText');
