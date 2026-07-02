@@ -425,16 +425,13 @@ async function showQuartiles() {
     const pad = n => String(n).padStart(2, '0');
     const sheetName = `${now.getFullYear()}-${pad(now.getMonth()+1)}-${pad(now.getDate())}_${pad(now.getHours())}:${pad(now.getMinutes())}`;
 
-    // 先儲存結果
     localStorage.setItem("rate", percentReduction.q2Percent);
     localStorage.setItem("errorCode", errorCode);
-
-    // 等上傳完成後再跳轉
-    await uploadToGoogleSheets({
+    localStorage.setItem("pendingUpload", JSON.stringify({
         sheetName,
         summary: {
-            nickname:       localStorage.getItem('nickname') || '未填寫',  // ← 加這行
-            device: getDeviceInfo(),
+            nickname:       localStorage.getItem('nickname') || '未填寫',
+            device:         getDeviceInfo(),
             time:           now.toLocaleString("zh-TW"),
             inhibitionRate: percentResult,
             errorCode:      errorCode,
@@ -461,7 +458,6 @@ async function showQuartiles() {
             entry.slope ? entry.slope.b1 : "",
             entry.slope ? entry.slope.b2 : ""
         ])
-    });
+    }));
 
     location.href = "Results.html";
-}
