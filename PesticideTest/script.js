@@ -461,3 +461,4 @@ async function showQuartiles() {
     }));
 
     location.href = "Results.html";
+}
