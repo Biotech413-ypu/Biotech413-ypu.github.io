@@ -39,9 +39,18 @@ else
     const radius = 70;
     const circumference = 2 * Math.PI * radius;
 
+    let color = '';
+    if (percent <= 35) {
+        color = 'green';
+    } else if (percent <= 45) {
+        color = 'orange';
+    } else {
+        color = 'red';
+    }
+
     circle.style.strokeDasharray = circumference;
     circle.style.strokeDashoffset = circumference;
-    circle.style.stroke = '#6ab04c';
+    circle.style.stroke = color;
     // 顯示錯誤碼
     const errorCode = localStorage.getItem("errorCode");
     if (errorCode && errorCode !== "正常") {
