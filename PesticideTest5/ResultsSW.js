@@ -1,4 +1,4 @@
-const GOOGLE_SHEET_URL = "https://script.google.com/macros/s/AKfycbzjxUWuiQVYlDZ3zdM4An7Rby29H9PYvnxtd8J-SEnEyD6SmKGCl1XYJNDg2UhSxHFG4A/exec";
+const GOOGLE_SHEET_URL = "https://script.google.com/macros/s/AKfycbw-nQVczGZguo7o0kZBBGil7Fb0m7dHEDLT-dy0tOEtNtBp_0pqLQSCJmExP0yeMTr_/exec";
 
 (async function uploadPending() {
     const raw = localStorage.getItem("pendingUpload");
