@@ -24,11 +24,16 @@
     <div class="panel"><div class="summary" id="summary"></div></div>
 
     <div class="panel">
-      <h2>活動名稱</h2>
+      <h2>活動設定</h2>
       <form class="row" id="title-form">
-        <div class="field"><label for="title-input">顯示在前台上方</label><input type="text" id="title-input" maxlength="60"></div>
-        <button type="submit">儲存</button>
+        <div class="field"><label for="title-input">活動名稱（顯示在前台上方）</label><input type="text" id="title-input" maxlength="60"></div>
+        <button type="submit">儲存名稱</button>
       </form>
+      <div class="row">
+        <div class="field tight"><label for="machine-color">扭蛋機顏色</label><input type="color" id="machine-color" value="#D7372B"></div>
+        <div class="machine-preview" aria-hidden="true"><span class="mp-dome"></span><span class="mp-body"></span></div>
+        <button type="button" class="btn-small" id="machine-reset">恢復預設紅色</button>
+      </div>
     </div>
 
     <div class="panel">
@@ -69,13 +74,34 @@
     </div>
 
     <div class="panel">
-      <h2>備份與搬移</h2>
-      <p class="mode-note">資料存在這台電腦的瀏覽器裡。換電腦或換瀏覽器前，先匯出備份檔，再到新的地方匯入。</p>
-      <div class="backup-row">
-        <button type="button" id="export-btn">匯出備份檔</button>
-        <label class="btn">匯入備份檔<input type="file" id="import-file" accept="application/json,.json"></label>
+      <h2>設定檔</h2>
+      <p class="mode-note">設定檔包含活動名稱、機器顏色、所有獎品、圖片與目前數量。匯出後放到 GitHub repository 的 <code>configs/</code> 資料夾，之後在任何電腦打開後台都能直接從下面的清單載入。</p>
+      <div class="cfg-grid">
+        <div class="cfg-block">
+          <h3>匯出目前設定</h3>
+          <form class="row" id="export-form">
+            <div class="field"><label for="export-name">設定檔名稱</label><input type="text" id="export-name" maxlength="60" placeholder="例如：2026尾牙"></div>
+            <button type="submit">匯出設定檔</button>
+          </form>
+        </div>
+        <div class="cfg-block">
+          <h3>從 GitHub 上的設定檔載入</h3>
+          <div class="row">
+            <div class="field"><label for="cfg-select">configs 資料夾裡的設定檔</label><select id="cfg-select"><option value="">讀取中…</option></select></div>
+            <button type="button" id="cfg-refresh">重新讀取清單</button>
+          </div>
+          <label class="check"><input type="checkbox" id="cfg-reset" checked> 載入後把剩餘數量恢復成原始數量，並清除得獎紀錄</label>
+          <div class="actions"><button type="button" class="btn-danger" id="cfg-load">載入選擇的設定檔</button></div>
+          <p class="msg" id="cfg-msg"></p>
+        </div>
+        <div class="cfg-block">
+          <h3>從這台電腦的檔案載入</h3>
+          <div class="backup-row">
+            <label class="btn">選擇設定檔…<input type="file" id="import-file" accept="application/json,.json"></label>
+          </div>
+          <p class="msg" id="backup-msg"></p>
+        </div>
       </div>
-      <p class="msg" id="backup-msg"></p>
     </div>
   </section>
 </div>

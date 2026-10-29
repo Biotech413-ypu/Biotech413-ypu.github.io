@@ -12,6 +12,88 @@
   const sleep = ms => new Promise(r => setTimeout(r, ms));
   function showMsg(text, isErr) { const el = $('#draw-msg'); el.textContent = text; el.classList.toggle('err', !!isErr); }
 
+  /* ---------- sound (synthesised with Web Audio, no audio files needed) ---------- */
+  const Sound = (() => {
+    let ctx = null, on = true;
+    try { on = localStorage.getItem('gacha-sound') !== 'off'; } catch (e) {}
+    function ac() {
+      if (!on) return null;
+      if (!ctx) { const C = window.AudioContext || window.webkitAudioContext; if (!C) return null; ctx = new C(); }
+      if (ctx.state === 'suspended') ctx.resume();
+      return ctx;
+    }
+    let noise = null;
+    function noiseBuf(c) {
+      if (noise) return noise;
+      noise = c.createBuffer(1, Math.floor(c.sampleRate * 0.5), c.sampleRate);
+      const d = noise.getChannelData(0); for (let i = 0; i < d.length; i++) d[i] = Math.random() * 2 - 1;
+      return noise;
+    }
+    function click(t, freq, gain, dur, q) {
+      const c = ctx, s = c.createBufferSource(), f = c.createBiquadFilter(), g = c.createGain();
+      s.buffer = noiseBuf(c); f.type = 'bandpass'; f.frequency.value = freq; f.Q.value = q || 3;
+      g.gain.setValueAtTime(gain, t); g.gain.exponentialRampToValueAtTime(0.0008, t + dur);
+      s.connect(f).connect(g).connect(c.destination); s.start(t, Math.random() * 0.4); s.stop(t + dur + 0.02);
+    }
+    function tone(t, freq, dur, type, gain, endFreq) {
+      const c = ctx, o = c.createOscillator(), g = c.createGain();
+      o.type = type || 'sine'; o.frequency.setValueAtTime(freq, t);
+      if (endFreq) o.frequency.exponentialRampToValueAtTime(endFreq, t + dur);
+      g.gain.setValueAtTime(0.0001, t); g.gain.exponentialRampToValueAtTime(gain, t + 0.01); g.gain.exponentialRampToValueAtTime(0.0008, t + dur);
+      o.connect(g).connect(c.destination); o.start(t); o.stop(t + dur + 0.02);
+    }
+    return {
+      get on() { return on; },
+      set(v) { on = v; try { localStorage.setItem('gacha-sound', v ? 'on' : 'off'); } catch (e) {} if (v) ac(); },
+      // Ratchet of the crank plus capsules clattering in the dome.
+      crank(ms) {
+        if (!ac()) return; const t0 = ctx.currentTime + 0.02, sec = ms / 1000;
+        for (let i = 0; i < 16; i++) { const t = t0 + (i / 16) * sec * 0.75; click(t, 2600 + Math.random() * 500, 0.5, 0.03, 6); click(t + 0.006, 1200, 0.2, 0.04, 2); }
+        for (let i = 0; i < 26; i++) click(t0 + Math.random() * sec, 1400 + Math.random() * 2200, 0.16 + Math.random() * 0.12, 0.05, 5);
+      },
+      // Capsule landing in the chute: a hollow plastic knock and two small bounces.
+      drop() {
+        if (!ac()) return; const t = ctx.currentTime + 0.02;
+        [[0, 1], [0.17, 0.5], [0.28, 0.25]].forEach(([dt, k]) => { tone(t + dt, 230, 0.16, 'sine', 0.45 * k, 90); click(t + dt, 1800, 0.35 * k, 0.04, 4); });
+      },
+      // Small rattles while the capsule wobbles.
+      rattle() {
+        if (!ac()) return; const t0 = ctx.currentTime;
+        [0.1, 0.2, 0.75, 0.88, 1.2, 1.3, 1.4, 1.5].forEach(dt => click(t0 + dt, 2000 + Math.random() * 1500, 0.22, 0.04, 5));
+      },
+      // The two halves popping apart, then a little fanfare.
+      pop() {
+        if (!ac()) return; const t = ctx.currentTime + 0.01;
+        click(t, 3200, 0.7, 0.09, 1.5); tone(t, 320, 0.18, 'triangle', 0.3, 1100);
+        [523.25, 659.25, 783.99, 1046.5].forEach((f, i) => tone(t + 0.12 + i * 0.09, f, i === 3 ? 0.7 : 0.2, 'triangle', 0.16));
+        [1318.5, 1567.98].forEach((f, i) => tone(t + 0.5 + i * 0.07, f, 0.5, 'sine', 0.06));
+      }
+    };
+  })();
+  function syncSoundBtn() {
+    const b = $('#sound-btn'); b.setAttribute('aria-pressed', String(Sound.on));
+    $('#sound-label').textContent = Sound.on ? '音效開' : '音效關';
+    b.querySelector('.wave').toggleAttribute('hidden', !Sound.on);
+    b.querySelector('.mute').toggleAttribute('hidden', Sound.on);
+  }
+
+  /* ---------- machine colour ---------- */
+  function shade(hex, k) {
+    const n = parseInt(hex.slice(1), 16); const r = n >> 16, g = (n >> 8) & 255, b = n & 255;
+    const f = v => Math.max(0, Math.min(255, Math.round(v * k)));
+    return '#' + [f(r), f(g), f(b)].map(v => v.toString(16).padStart(2, '0')).join('');
+  }
+  function inkFor(hex) {
+    const n = parseInt(hex.slice(1), 16); const lin = v => { v /= 255; return v <= .03928 ? v / 12.92 : Math.pow((v + .055) / 1.055, 2.4); };
+    const L = .2126 * lin(n >> 16) + .7152 * lin((n >> 8) & 255) + .0722 * lin(n & 255);
+    return L > 0.4 ? '#1B2422' : '#FFFFFF';
+  }
+  function applyMachineColor(c) {
+    const color = G.validColor(c) ? c : '#D7372B';
+    const st = document.documentElement.style;
+    st.setProperty('--machine', color); st.setProperty('--machine-deep', shade(color, 0.72)); st.setProperty('--machine-ink', inkFor(color));
+  }
+
   /* ---------- capsules bouncing in the dome ---------- */
   const dome = (() => {
     const cv = $('#dome-canvas'), ctx = cv.getContext('2d');
@@ -119,6 +201,7 @@
   function render() {
     const title = data.title || '扭蛋抽獎';
     $('#title').textContent = title; document.title = title;
+    applyMachineColor(data.machineColor);
     const left = totalLeft();
     $('#left-count').textContent = left;
     $('#knob').disabled = busy || revealing || left <= 0;
@@ -134,26 +217,20 @@
     }).join('') : '<li class="empty">還沒有獎品。</li>';
     G.hydrateImages(sc);
 
-    const recent = data.draws.slice(-8).reverse();
-    $('#log-front').innerHTML = recent.length ? recent.map(d => {
-      const c = G.validColor(d.prizeColor) ? d.prizeColor : colorById(d.prizeId);
-      return `<li><span class="n">#${G.pad(d.seq | 0)}</span><span class="dot" style="--c:${c}"></span><span class="p">${G.esc(d.prizeName)}${d.who ? ` <small>· ${G.esc(d.who)}</small>` : ''}</span><span class="t">${G.fmtTime(d.at)}</span></li>`;
-    }).join('') : '<li class="empty">還沒有人扭到。</li>';
-    $('#log-count').textContent = data.drawCount ? `共 ${data.drawCount} 顆` : '';
   }
 
   /* ---------- turning the knob ---------- */
   let knobAngle = 0;
   async function turn() {
     if (busy || revealing || totalLeft() <= 0) return;
-    const who = $('#who').value.trim();
     busy = true; showMsg(''); render();
     knobAngle += 360; $('#knob').style.transform = `rotate(${knobAngle}deg)`;
     if (!reduceMotion) $('#dome').classList.add('shake');
     dome.shake(1500);
+    Sound.crank(1500);
     const t0 = performance.now();
     try {
-      const rec = await G.draw(who);
+      const rec = await G.draw('');
       const wait = 1500 - (performance.now() - t0); if (wait > 0) await sleep(wait);
       $('#dome').classList.remove('shake');
       if (!rec) { showMsg('扭蛋已經扭完了。'); return; }
@@ -161,7 +238,7 @@
       const out = $('#cap-out');
       $('#cap-out-capsule').style.setProperty('--c', c);
       out.hidden = false; out.classList.remove('drop'); void out.offsetWidth; out.classList.add('drop');
-      $('#who').value = '';
+      setTimeout(() => Sound.drop(), reduceMotion ? 0 : 450);
       revealing = true;
       await sleep(reduceMotion ? 200 : 900);
       startReveal(rec, c);
@@ -183,7 +260,7 @@
     pic.innerHTML = G.picHtml(rec.prizeImage, color, rec.prizeName);
     G.hydrateImages(pic);
     $('#prize-name').textContent = rec.prizeName;
-    $('#prize-sub').textContent = (rec.who ? rec.who + ' · ' : '') + '第 ' + G.pad(rec.seq) + ' 顆';
+    $('#prize-sub').textContent = '第 ' + G.pad(rec.seq) + ' 顆';
     $('#cap-out').hidden = true;
     opened = false;
     rv.className = 'reveal'; rv.hidden = false;
@@ -191,7 +268,7 @@
     if (reduceMotion) { openCapsule(); return; }
     requestAnimationFrame(() => {
       rv.classList.add('in');
-      setTimeout(() => { if (!opened) { rv.classList.remove('in'); rv.classList.add('wobble'); } }, 650);
+      setTimeout(() => { if (!opened) { rv.classList.remove('in'); rv.classList.add('wobble'); Sound.rattle(); } }, 650);
       openTimer = setTimeout(openCapsule, 650 + 1700);
     });
   }
@@ -200,6 +277,7 @@
     opened = true; clearTimeout(openTimer);
     const rv = $('#reveal');
     rv.classList.remove('in', 'wobble'); rv.classList.add('opened');
+    Sound.pop();
     confetti(rv.style.getPropertyValue('--c') || G.PALETTE[0]);
     setTimeout(() => $('#reveal-close').focus(), 500);
   }
@@ -216,6 +294,7 @@
   $('#reveal-close').addEventListener('click', closeReveal);
   $('#reveal').addEventListener('click', e => { if (e.target.id === 'reveal') closeReveal(); });
   document.addEventListener('keydown', e => { if (e.key === 'Escape' && !$('#reveal').hidden) closeReveal(); });
-  $('#who-form').addEventListener('submit', e => { e.preventDefault(); turn(); });
+  $('#sound-btn').addEventListener('click', () => { Sound.set(!Sound.on); syncSoundBtn(); });
+  syncSoundBtn();
   G.subscribe(d => { data = d; render(); });
 })();

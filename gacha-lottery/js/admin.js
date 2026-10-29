@@ -16,6 +16,9 @@
     const left = totalLeft(), total = data.prizes.reduce((s, p) => s + (p.total | 0), 0);
     $('#summary').innerHTML = `<span><b>${data.prizes.length}</b>種獎品</span><span><b>${left}</b>顆剩餘</span><span><b>${total}</b>顆原始</span><span><b>${data.drawCount | 0}</b>顆已扭出</span>`;
     const ti = $('#title-input'); if (document.activeElement !== ti) ti.value = data.title || '';
+    const mc = G.validColor(data.machineColor) ? data.machineColor : '#D7372B';
+    if (document.activeElement !== $('#machine-color')) $('#machine-color').value = mc.toLowerCase();
+    previewMachine(mc);
     const ac = $('#add-color'); if (!ac.dataset.touched) ac.value = G.nextColor(data.prizes);
 
     const logs = data.draws.slice().reverse();
@@ -154,32 +157,118 @@
     G.update(d => { d.draws = []; d.drawCount = 0; });
   }, '#table-msg');
 
-  /* ---------- backup ---------- */
-  $('#export-btn').addEventListener('click', async () => {
+  /* ---------- machine colour ---------- */
+  function previewMachine(c) {
+    const n = parseInt(c.slice(1), 16); const k = 0.72;
+    const deep = '#' + [n >> 16, (n >> 8) & 255, n & 255].map(v => Math.round(v * k).toString(16).padStart(2, '0')).join('');
+    const pv = document.querySelector('.machine-preview'); pv.style.setProperty('--machine', c); pv.style.setProperty('--machine-deep', deep);
+  }
+  $('#machine-color').addEventListener('input', e => previewMachine(e.target.value));
+  $('#machine-color').addEventListener('change', e => {
+    const v = e.target.value; if (!G.validColor(v)) return;
+    G.update(d => { d.machineColor = v; }); showMsg('#table-msg', '扭蛋機顏色已儲存。');
+  });
+  $('#machine-reset').addEventListener('click', () => { G.update(d => { d.machineColor = '#D7372B'; }); });
+
+  /* ---------- export a config file ---------- */
+  const safeName = s => s.replace(/[\\/:*?"<>|#%\s]+/g, '-').replace(/^-+|-+$/g, '');
+  $('#export-form').addEventListener('submit', async e => {
+    e.preventDefault();
+    const label = $('#export-name').value.trim();
+    const stamp = new Date().toISOString().slice(0, 10).replace(/-/g, '');
+    const file = (safeName(label) || 'gacha-config-' + stamp) + '.json';
     try {
-      const obj = await G.exportBackup();
+      const obj = await G.exportBackup(label);
       const blob = new Blob([JSON.stringify(obj)], { type: 'application/json' });
       const a = document.createElement('a');
-      const day = new Date().toISOString().slice(0, 10);
-      a.href = URL.createObjectURL(blob); a.download = `扭蛋抽獎備份-${day}.json`;
+      a.href = URL.createObjectURL(blob); a.download = file;
       document.body.appendChild(a); a.click(); a.remove();
       setTimeout(() => URL.revokeObjectURL(a.href), 5000);
-      showMsg('#backup-msg', '備份檔已下載。');
-    } catch (err) { showMsg('#backup-msg', '匯出失敗：' + errText(err), true); }
+    } catch (err) { showMsg('#cfg-msg', '匯出失敗：' + errText(err), true); return; }
+    showMsg('#cfg-msg', `已下載「${file}」。把它上傳到 GitHub repository 的 configs 資料夾，約一兩分鐘後按「重新讀取清單」就會出現。`);
   });
+
+  /* ---------- list config files published with the site ---------- */
+  // 1) configs/index.json if you keep one (works on any host);
+  // 2) otherwise ask the GitHub API what is inside configs/ (works on *.github.io for public repos).
+  function repoInfo() {
+    const host = location.hostname;
+    if (!host.endsWith('.github.io')) return null;
+    const owner = host.split('.')[0];
+    const first = location.pathname.split('/').filter(Boolean)[0];
+    const repo = first && !/\.html?$/i.test(first) ? first : host;
+    return { owner, repo };
+  }
+  async function listConfigs() {
+    try {
+      const r = await fetch('configs/index.json', { cache: 'no-store' });
+      if (r.ok) {
+        const arr = await r.json();
+        if (Array.isArray(arr)) return arr.map(x => typeof x === 'string' ? x : x && x.file).filter(f => f && /\.json$/i.test(f) && f !== 'index.json').map(f => ({ name: f, url: 'configs/' + encodeURIComponent(f) }));
+      }
+    } catch (e) {}
+    const info = repoInfo();
+    if (!info) throw new Error('local');
+    const r = await fetch(`https://api.github.com/repos/${info.owner}/${info.repo}/contents/configs`, { headers: { Accept: 'application/vnd.github+json' }, cache: 'no-store' });
+    if (r.status === 404) return [];
+    if (r.status === 403) throw new Error('GitHub 暫時限制查詢次數，請稍後再按「重新讀取清單」');
+    if (!r.ok) throw new Error('GitHub 回應錯誤（' + r.status + '）');
+    const items = await r.json();
+    return items.filter(x => x.type === 'file' && /\.json$/i.test(x.name) && x.name !== 'index.json')
+      .map(x => ({ name: x.name, url: 'configs/' + encodeURIComponent(x.name), alt: x.download_url }));
+  }
+  let configs = [];
+  async function refreshConfigs() {
+    const sel = $('#cfg-select'); sel.innerHTML = '<option value="">讀取中…</option>'; sel.disabled = true;
+    try {
+      configs = await listConfigs();
+      if (!configs.length) {
+        sel.innerHTML = '<option value="">（configs 資料夾裡還沒有設定檔）</option>';
+        showMsg('#cfg-msg', '把匯出的設定檔上傳到 repository 的 configs 資料夾後，按「重新讀取清單」。');
+      } else {
+        sel.innerHTML = configs.map((c, i) => `<option value="${i}">${G.esc(c.name.replace(/\.json$/i, ''))}</option>`).join('');
+        sel.disabled = false; showMsg('#cfg-msg', `找到 ${configs.length} 個設定檔。`);
+      }
+    } catch (err) {
+      sel.innerHTML = '<option value="">（無法讀取清單）</option>';
+      showMsg('#cfg-msg', err.message === 'local'
+        ? '這個清單要放到 GitHub Pages 上才能自動讀取。在本機測試時，可以在 configs 資料夾放一個 index.json 列出檔名，或用下方「從這台電腦的檔案載入」。'
+        : '讀取清單失敗：' + errText(err), err.message !== 'local');
+    }
+  }
+  async function fetchConfig(c) {
+    let r = null;
+    try { r = await fetch(c.url, { cache: 'no-store' }); } catch (e) {}
+    // A file uploaded a moment ago may not be on the Pages site yet; read it straight from the repo.
+    if ((!r || !r.ok) && c.alt) r = await fetch(c.alt, { cache: 'no-store' });
+    if (!r || !r.ok) throw new Error('下載設定檔失敗，請稍後再試');
+    return r.json();
+  }
+  $('#cfg-refresh').addEventListener('click', refreshConfigs);
+  armButton($('#cfg-load'), '載入選擇的設定檔', '會取代目前所有資料，確定？', async () => {
+    const c = configs[Number($('#cfg-select').value)];
+    if (!c) { showMsg('#cfg-msg', '請先選擇一個設定檔。', true); return; }
+    showMsg('#cfg-msg', '正在載入…');
+    const obj = await fetchConfig(c);
+    await G.importBackup(obj, { reset: $('#cfg-reset').checked });
+    showMsg('#cfg-msg', `已載入「${obj.name || c.name}」。已開啟的前台會自動更新。`);
+  }, '#cfg-msg');
+  refreshConfigs();
+
+  /* ---------- load a config file from this computer ---------- */
   let pendingImport = null;
   $('#import-file').addEventListener('change', async e => {
     const f = e.target.files[0]; e.target.value = ''; if (!f) return;
     try {
       const obj = JSON.parse(await f.text());
-      if (!obj || obj.app !== 'gacha-lottery') throw new Error('這不是扭蛋抽獎的備份檔');
+      G.checkConfig(obj);
       pendingImport = obj;
-      showMsg('#backup-msg', `備份檔內有 ${obj.data.prizes.length} 種獎品。匯入會取代目前所有獎品、圖片與紀錄，`);
-      const go = document.createElement('button'); go.type = 'button'; go.className = 'btn-danger armed btn-small'; go.textContent = '確定匯入';
+      showMsg('#backup-msg', `「${obj.name || f.name}」有 ${obj.data.prizes.length} 種獎品。載入會取代目前所有獎品、圖片與紀錄（是否重設數量依照上方勾選）。 `);
+      const go = document.createElement('button'); go.type = 'button'; go.className = 'btn-danger armed btn-small'; go.textContent = '確定載入';
       go.addEventListener('click', async () => {
         go.disabled = true;
-        try { await G.importBackup(pendingImport); pendingImport = null; showMsg('#backup-msg', '匯入完成。'); }
-        catch (err) { showMsg('#backup-msg', '匯入失敗：' + errText(err), true); }
+        try { await G.importBackup(pendingImport, { reset: $('#cfg-reset').checked }); pendingImport = null; showMsg('#backup-msg', '載入完成。'); }
+        catch (err) { showMsg('#backup-msg', '載入失敗：' + errText(err), true); }
       });
       $('#backup-msg').appendChild(go);
     } catch (err) { showMsg('#backup-msg', '無法讀取：' + errText(err), true); }

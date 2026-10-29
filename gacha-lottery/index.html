@@ -17,6 +17,10 @@
         <div class="eyebrow">Gacha</div>
         <h1 id="title">扭蛋抽獎</h1>
       </div>
+      <button type="button" class="sound-btn" id="sound-btn" aria-pressed="true">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 9h4l5-4v14l-5-4H4z"/><path class="wave" d="M16.5 8.5a5 5 0 0 1 0 7M19 6a8.5 8.5 0 0 1 0 12"/><path class="mute" d="M17 9l5 6M22 9l-5 6" hidden/></svg>
+        <span id="sound-label">音效開</span>
+      </button>
     </div>
     <div class="draw-grid">
       <div class="stage">
@@ -35,7 +39,6 @@
         </div>
         <div class="under">
           <div class="hint" id="hint" aria-live="polite">載入中…</div>
-          <form id="who-form"><input type="text" id="who" placeholder="扭蛋人姓名（選填）" maxlength="40" autocomplete="off"></form>
           <p class="msg" id="draw-msg"></p>
         </div>
       </div>
@@ -43,10 +46,6 @@
         <div class="panel">
           <div class="panel-head"><h2>扭蛋裡有什麼</h2><span class="mode-note" id="kinds-count"></span></div>
           <ul class="showcase" id="showcase"></ul>
-        </div>
-        <div class="panel">
-          <div class="panel-head"><h2>最近開出</h2><span class="mode-note" id="log-count"></span></div>
-          <ul class="log" id="log-front"></ul>
         </div>
       </div>
     </div>

@@ -10,7 +10,7 @@
   const PALETTE = ['#E8483C', '#F2B705', '#2F7FE0', '#2EAA5C', '#EF6FA8', '#F07C1E', '#8A5BE0', '#16A3A3'];
   const MAX_DRAWS = 2000;
 
-  const empty = () => ({ title: '', drawCount: 0, prizes: [], draws: [] });
+  const empty = () => ({ title: '', machineColor: '#D7372B', drawCount: 0, prizes: [], draws: [] });
   const uid = p => p + Date.now().toString(36) + Math.random().toString(36).slice(2, 8);
 
   /* ---------- data ---------- */
@@ -120,21 +120,29 @@
     });
   }
 
-  /* ---------- backup ---------- */
+  /* ---------- config files (export / import) ---------- */
   const blobToDataUrl = b => new Promise((res, rej) => { const r = new FileReader(); r.onload = () => res(r.result); r.onerror = () => rej(r.error); r.readAsDataURL(b); });
-  async function exportBackup() {
-    const data = read(); const imgs = {};
-    for (const [k, v] of await images.allEntries()) imgs[k] = await blobToDataUrl(v);
-    return { app: 'gacha-lottery', version: 1, exportedAt: new Date().toISOString(), data, images: imgs };
+  // Only images that a prize still uses go into the file.
+  async function exportBackup(name) {
+    const data = read(); const used = new Set(data.prizes.map(p => p.image).filter(Boolean)); const imgs = {};
+    for (const [k, v] of await images.allEntries()) if (used.has(k)) imgs[k] = await blobToDataUrl(v);
+    return { app: 'gacha-lottery', version: 1, name: name || '', exportedAt: new Date().toISOString(), data, images: imgs };
   }
-  async function importBackup(obj) {
-    if (!obj || obj.app !== 'gacha-lottery' || !obj.data || !Array.isArray(obj.data.prizes)) throw new Error('這不是扭蛋抽獎的備份檔');
+  function checkConfig(obj) {
+    if (!obj || obj.app !== 'gacha-lottery' || !obj.data || !Array.isArray(obj.data.prizes)) throw new Error('這不是扭蛋抽獎的設定檔');
+  }
+  // reset: start the event fresh (every prize back to its original count, no draw history).
+  async function importBackup(obj, opts) {
+    checkConfig(obj);
+    const reset = !!(opts && opts.reset);
     await images.clear();
     for (const [k, v] of Object.entries(obj.images || {})) {
       const blob = await (await fetch(v)).blob();
       await tx('readwrite', s => s.put(blob, k));
     }
-    write({ ...empty(), ...obj.data });
+    const d = { ...empty(), ...obj.data };
+    if (reset) { d.prizes.forEach(p => { p.remaining = p.total | 0; }); d.draws = []; d.drawCount = 0; }
+    write(d);
   }
 
   /* ---------- shared helpers ---------- */
@@ -166,7 +174,7 @@
   }
 
   window.Gacha = {
-    PALETTE, subscribe, read, update, draw, images, shrinkImage, exportBackup, importBackup,
+    PALETTE, subscribe, read, update, draw, images, shrinkImage, exportBackup, importBackup, checkConfig,
     uid, esc, pad, fmtTime, validColor, colorOf, nextColor, capsuleHtml, picHtml, hydrateImages
   };
 })();
