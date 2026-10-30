@@ -190,59 +190,87 @@
 
   /* ---------- list config files published with the site ---------- */
   // 1) configs/index.json if you keep one (works on any host);
-  // 2) otherwise ask the GitHub API what is inside configs/ (works on *.github.io for public repos).
+  // 2) otherwise read the repository's file list through the GitHub API (public repos on *.github.io).
+  //    Any .json inside a folder named "configs" is listed, wherever the site sits in the repo.
+  const parseJson = text => JSON.parse(String(text).replace(/^﻿/, ''));
   function repoInfo() {
     const host = location.hostname;
     if (!host.endsWith('.github.io')) return null;
     const owner = host.split('.')[0];
-    const first = location.pathname.split('/').filter(Boolean)[0];
-    const repo = first && !/\.html?$/i.test(first) ? first : host;
-    return { owner, repo };
+    const segs = location.pathname.split('/').filter(Boolean).map(decodeURIComponent);
+    if (segs.length && /\.[a-z0-9]+$/i.test(segs[segs.length - 1])) segs.pop(); // drop admin.html
+    // https://owner.github.io/repo/... is a project site; a repo named owner.github.io serves from the root.
+    const userSite = { owner, repo: host, prefix: segs.join('/') };
+    const projectSite = segs.length ? { owner, repo: segs[0], prefix: segs.slice(1).join('/') } : null;
+    return { candidates: projectSite ? [projectSite, userSite] : [userSite] };
   }
+  const rawUrl = (o, r, path) => `https://raw.githubusercontent.com/${o}/${r}/HEAD/${path.split('/').map(encodeURIComponent).join('/')}`;
+  let checkedRepo = '';
   async function listConfigs() {
     try {
       const r = await fetch('configs/index.json', { cache: 'no-store' });
       if (r.ok) {
-        const arr = await r.json();
-        if (Array.isArray(arr)) return arr.map(x => typeof x === 'string' ? x : x && x.file).filter(f => f && /\.json$/i.test(f) && f !== 'index.json').map(f => ({ name: f, url: 'configs/' + encodeURIComponent(f) }));
+        const arr = parseJson(await r.text());
+        if (Array.isArray(arr)) return arr.map(x => typeof x === 'string' ? x : x && x.file).filter(f => f && /\.json$/i.test(f) && f !== 'index.json')
+          .map(f => ({ name: f, url: 'configs/' + f.split('/').map(encodeURIComponent).join('/') }));
       }
     } catch (e) {}
     const info = repoInfo();
     if (!info) throw new Error('local');
-    const r = await fetch(`https://api.github.com/repos/${info.owner}/${info.repo}/contents/configs`, { headers: { Accept: 'application/vnd.github+json' }, cache: 'no-store' });
-    if (r.status === 404) return [];
-    if (r.status === 403) throw new Error('GitHub 暫時限制查詢次數，請稍後再按「重新讀取清單」');
-    if (!r.ok) throw new Error('GitHub 回應錯誤（' + r.status + '）');
-    const items = await r.json();
-    return items.filter(x => x.type === 'file' && /\.json$/i.test(x.name) && x.name !== 'index.json')
-      .map(x => ({ name: x.name, url: 'configs/' + encodeURIComponent(x.name), alt: x.download_url }));
+    let lastStatus = 0;
+    for (const c of info.candidates) {
+      checkedRepo = `${c.owner}/${c.repo}`;
+      let r;
+      try { r = await fetch(`https://api.github.com/repos/${c.owner}/${c.repo}/git/trees/HEAD?recursive=1`, { headers: { Accept: 'application/vnd.github+json' }, cache: 'no-store' }); }
+      catch (e) { throw new Error('連不上 GitHub，請檢查網路後再試'); }
+      lastStatus = r.status;
+      if (r.status === 404) continue;
+      if (r.status === 409) return []; // empty repository
+      if (r.status === 403 || r.status === 429) throw new Error('GitHub 暫時限制查詢次數（每小時 60 次），請過幾分鐘再按「重新讀取清單」');
+      if (!r.ok) throw new Error('GitHub 回應錯誤（' + r.status + '）');
+      const tree = (await r.json()).tree || [];
+      const prefix = c.prefix ? c.prefix + '/' : '';
+      const files = tree.filter(x => x.type === 'blob' && /\.json$/i.test(x.path) && !/(^|\/)(index|package|package-lock)\.json$/i.test(x.path));
+      // Files in a configs folder first; also accept .json files dropped next to admin.html by mistake.
+      const inConfigs = files.filter(x => /(^|\/)configs\/[^/]+$/i.test(x.path));
+      const nearSite = files.filter(x => !inConfigs.includes(x) && x.path.startsWith(prefix) && !x.path.slice(prefix.length).includes('/'));
+      const pick = [...inConfigs.sort((a, b) => (b.path.startsWith(prefix) ? 1 : 0) - (a.path.startsWith(prefix) ? 1 : 0)), ...nearSite];
+      return pick.map(x => {
+        const base = x.path.split('/').pop();
+        const where = /(^|\/)configs\//i.test(x.path) ? '' : '（不在 configs 資料夾）';
+        return { name: base, label: base.replace(/\.json$/i, '') + where, path: x.path, url: rawUrl(c.owner, c.repo, x.path) };
+      });
+    }
+    if (lastStatus === 404) throw new Error(`找不到 repository「${checkedRepo}」。請確認 repository 是 Public（Settings → General → Danger Zone → Change visibility）`);
+    return [];
   }
   let configs = [];
   async function refreshConfigs() {
     const sel = $('#cfg-select'); sel.innerHTML = '<option value="">讀取中…</option>'; sel.disabled = true;
     try {
       configs = await listConfigs();
+      const where = checkedRepo ? `（已檢查 ${checkedRepo}）` : '';
       if (!configs.length) {
-        sel.innerHTML = '<option value="">（configs 資料夾裡還沒有設定檔）</option>';
-        showMsg('#cfg-msg', '把匯出的設定檔上傳到 repository 的 configs 資料夾後，按「重新讀取清單」。');
+        sel.innerHTML = '<option value="">（還沒有設定檔）</option>';
+        showMsg('#cfg-msg', `沒有找到設定檔${where}。請把匯出的 .json 上傳到 repository 的 configs 資料夾，等一兩分鐘後按「重新讀取清單」。`);
       } else {
-        sel.innerHTML = configs.map((c, i) => `<option value="${i}">${G.esc(c.name.replace(/\.json$/i, ''))}</option>`).join('');
-        sel.disabled = false; showMsg('#cfg-msg', `找到 ${configs.length} 個設定檔。`);
+        sel.innerHTML = configs.map((c, i) => `<option value="${i}">${G.esc(c.label || c.name.replace(/\.json$/i, ''))}</option>`).join('');
+        sel.disabled = false; showMsg('#cfg-msg', `找到 ${configs.length} 個設定檔${where}。`);
       }
     } catch (err) {
       sel.innerHTML = '<option value="">（無法讀取清單）</option>';
       showMsg('#cfg-msg', err.message === 'local'
-        ? '這個清單要放到 GitHub Pages 上才能自動讀取。在本機測試時，可以在 configs 資料夾放一個 index.json 列出檔名，或用下方「從這台電腦的檔案載入」。'
+        ? '目前不是在 github.io 網址上開啟，所以無法自動讀取 GitHub 清單。請用下方「從這台電腦的檔案載入」，或在 configs 資料夾放一個 index.json 列出檔名。'
         : '讀取清單失敗：' + errText(err), err.message !== 'local');
     }
   }
   async function fetchConfig(c) {
-    let r = null;
-    try { r = await fetch(c.url, { cache: 'no-store' }); } catch (e) {}
-    // A file uploaded a moment ago may not be on the Pages site yet; read it straight from the repo.
-    if ((!r || !r.ok) && c.alt) r = await fetch(c.alt, { cache: 'no-store' });
-    if (!r || !r.ok) throw new Error('下載設定檔失敗，請稍後再試');
-    return r.json();
+    let r;
+    try { r = await fetch(c.url, { cache: 'no-store' }); } catch (e) { throw new Error('下載設定檔失敗，請檢查網路後再試'); }
+    if (!r.ok) throw new Error('下載設定檔失敗（' + r.status + '）');
+    let obj;
+    try { obj = parseJson(await r.text()); } catch (e) { throw new Error('「' + c.name + '」不是有效的 JSON 檔，可能在上傳時被改動，請重新匯出後再上傳'); }
+    return obj;
   }
   $('#cfg-refresh').addEventListener('click', refreshConfigs);
   armButton($('#cfg-load'), '載入選擇的設定檔', '會取代目前所有資料，確定？', async () => {
@@ -260,7 +288,7 @@
   $('#import-file').addEventListener('change', async e => {
     const f = e.target.files[0]; e.target.value = ''; if (!f) return;
     try {
-      const obj = JSON.parse(await f.text());
+      const obj = parseJson(await f.text());
       G.checkConfig(obj);
       pendingImport = obj;
       showMsg('#backup-msg', `「${obj.name || f.name}」有 ${obj.data.prizes.length} 種獎品。載入會取代目前所有獎品、圖片與紀錄（是否重設數量依照上方勾選）。 `);
@@ -271,7 +299,7 @@
         catch (err) { showMsg('#backup-msg', '載入失敗：' + errText(err), true); }
       });
       $('#backup-msg').appendChild(go);
-    } catch (err) { showMsg('#backup-msg', '無法讀取：' + errText(err), true); }
+    } catch (err) { showMsg('#backup-msg', '無法讀取：' + (err instanceof SyntaxError ? '這個檔案不是有效的 JSON，請確認選的是後台匯出的設定檔' : errText(err)), true); }
   });
 
   G.subscribe(d => { data = d; render(); });
