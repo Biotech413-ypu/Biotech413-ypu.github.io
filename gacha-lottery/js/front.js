@@ -16,12 +16,41 @@
   const Sound = (() => {
     let ctx = null, on = true;
     try { on = localStorage.getItem('gacha-sound') !== 'off'; } catch (e) {}
+    // iPad / iPhone Safari: Web Audio is treated as "ambient" sound and is muted by silent mode.
+    // Asking for the "playback" session (Safari 17+) makes it behave like a video's sound.
+    try { if (navigator.audioSession) navigator.audioSession.type = 'playback'; } catch (e) {}
     function ac() {
       if (!on) return null;
       if (!ctx) { const C = window.AudioContext || window.webkitAudioContext; if (!C) return null; ctx = new C(); }
-      if (ctx.state === 'suspended') ctx.resume();
+      if (ctx.state !== 'running') { try { ctx.resume(); } catch (e) {} }
       return ctx;
     }
+    // Safari only lets a page start sound from inside a tap, so unlock on the very first touch
+    // anywhere on the page: start the audio engine, play one silent sample, and play a silent
+    // <audio> clip (older iPadOS switches to "playback" this way, so silent mode no longer mutes it).
+    let unlocked = false, silentEl = null;
+    function silentWav() {
+      const n = 2205, buf = new ArrayBuffer(44 + n * 2), v = new DataView(buf);
+      const w = (o, s) => { for (let i = 0; i < s.length; i++) v.setUint8(o + i, s.charCodeAt(i)); };
+      w(0, 'RIFF'); v.setUint32(4, 36 + n * 2, true); w(8, 'WAVE'); w(12, 'fmt '); v.setUint32(16, 16, true);
+      v.setUint16(20, 1, true); v.setUint16(22, 1, true); v.setUint32(24, 22050, true); v.setUint32(28, 44100, true);
+      v.setUint16(32, 2, true); v.setUint16(34, 16, true); w(36, 'data'); v.setUint32(40, n * 2, true);
+      return URL.createObjectURL(new Blob([buf], { type: 'audio/wav' }));
+    }
+    function unlock() {
+      if (!on) return;
+      const c = ac(); if (!c) return;
+      try { const b = c.createBuffer(1, 1, 22050), s = c.createBufferSource(); s.buffer = b; s.connect(c.destination); s.start(0); } catch (e) {}
+      if (!silentEl) {
+        try { silentEl = new Audio(silentWav()); silentEl.setAttribute('playsinline', ''); silentEl.loop = true; silentEl.volume = 0.01; } catch (e) {}
+      }
+      if (silentEl && silentEl.paused) { const p = silentEl.play(); if (p && p.catch) p.catch(() => {}); }
+      if (c.state === 'running') unlocked = true;
+    }
+    ['pointerdown', 'touchend', 'mousedown', 'keydown'].forEach(ev =>
+      document.addEventListener(ev, () => { if (!unlocked) unlock(); }, { capture: true, passive: true }));
+    // Coming back to the tab (or after a phone call) Safari suspends audio again.
+    document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible') unlocked = false; });
     let noise = null;
     function noiseBuf(c) {
       if (noise) return noise;
@@ -44,7 +73,7 @@
     }
     return {
       get on() { return on; },
-      set(v) { on = v; try { localStorage.setItem('gacha-sound', v ? 'on' : 'off'); } catch (e) {} if (v) ac(); },
+      set(v) { on = v; try { localStorage.setItem('gacha-sound', v ? 'on' : 'off'); } catch (e) {} if (v) { unlocked = false; unlock(); } else if (silentEl) silentEl.pause(); },
       // Ratchet of the crank plus capsules clattering in the dome.
       crank(ms) {
         if (!ac()) return; const t0 = ctx.currentTime + 0.02, sec = ms / 1000;
