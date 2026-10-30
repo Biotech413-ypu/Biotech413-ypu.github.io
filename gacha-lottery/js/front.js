@@ -134,7 +134,7 @@
   //    so an idle machine costs nothing.
   const dome = (() => {
     const cv = $('#dome-canvas'), ctx = cv.getContext('2d');
-    let W = 0, R = 0, r = 0, dpr = 1, balls = [], raf = 0, shaking = 0, still = 0, wokeAt = 0, last = 0, acc = 0;
+    let W = 0, R = 0, r = 0, dpr = 1, balls = [], firstFill = true, raf = 0, shaking = 0, still = 0, wokeAt = 0, last = 0, acc = 0;
     const sprites = new Map();
     function sprite(color) {
       const key = color + '|' + r + '|' + dpr;
@@ -157,7 +157,9 @@
       R = W / 2; r = Math.max(10, Math.round(W * 0.075));
       sprites.clear();
       if (oldR) { const k = R / oldR; balls.forEach(b => { b.x *= k; b.y *= k; }); }
-      balls.forEach(b => b.r = r); wake();
+      else balls.forEach(b => { b.x = R + (Math.random() - .5) * R; b.y = R * 0.6 * Math.random() + r; });
+      balls.forEach(b => b.r = r);
+      if (firstFill && balls.length && !reduceMotion) { settleNow(); firstFill = false; } else if (!oldR) draw(); else wake();
     }
     new ResizeObserver(size).observe(cv);
     function setTargets(counts) {
@@ -177,7 +179,19 @@
         changed = true;
         balls.push({ x: R + (Math.random() - .5) * R, y: R * 0.4 * Math.random() + r, vx: (Math.random() - .5) * 2, vy: 0, r, color, a: Math.random() * 6.28 });
       }
+      if (changed && firstFill && W && !reduceMotion) { settleNow(); firstFill = false; return; }
+      if (W) firstFill = false;
       if (changed) wake(); else if (!raf) draw();
+    }
+    // Run the physics off-screen until everything rests, then paint a single frame.
+    function settleNow() {
+      for (let i = 0; i < 400; i++) {
+        physics(false);
+        let maxV = 0; for (const b of balls) maxV = Math.max(maxV, Math.abs(b.vx), Math.abs(b.vy));
+        if (i > 180 && maxV < 0.3) break;
+      }
+      balls.forEach(b => { b.vx = 0; b.vy = 0; });
+      draw();
     }
     function wake() { still = 0; wokeAt = performance.now(); if (!raf) { last = 0; acc = 0; raf = requestAnimationFrame(frame); } }
     function shake(ms) { shaking = performance.now() + ms; wake(); }
