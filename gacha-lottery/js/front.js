@@ -124,14 +124,36 @@
   }
 
   /* ---------- capsules bouncing in the dome ---------- */
+  // Performance notes (Safari / iPad):
+  //  - physics runs at a fixed 60 steps per second, so 120 Hz iPads don't do double the work;
+  //  - each capsule colour is drawn once into a small sprite and then just stamped;
+  //  - the loop stops as soon as the capsules settle (and never runs longer than a few seconds),
+  //    so an idle machine costs nothing.
   const dome = (() => {
     const cv = $('#dome-canvas'), ctx = cv.getContext('2d');
-    let W = 0, R = 0, r = 0, balls = [], asleep = 0, raf = 0, shaking = 0;
+    let W = 0, R = 0, r = 0, dpr = 1, balls = [], raf = 0, shaking = 0, still = 0, wokeAt = 0, last = 0, acc = 0;
+    const sprites = new Map();
+    function sprite(color) {
+      const key = color + '|' + r + '|' + dpr;
+      if (sprites.has(key)) return sprites.get(key);
+      const size = Math.ceil((r * 2 + 4) * dpr), c = document.createElement('canvas'); c.width = c.height = size;
+      const x = c.getContext('2d'); x.scale(dpr, dpr); x.translate(r + 2, r + 2);
+      x.beginPath(); x.arc(0, 0, r, Math.PI, 0); x.closePath(); x.fillStyle = color; x.fill();
+      x.beginPath(); x.arc(0, 0, r, 0, Math.PI); x.closePath(); x.fillStyle = '#F3F4F0'; x.fill();
+      x.beginPath(); x.arc(0, 0, r, 0, Math.PI * 2); x.lineWidth = 1.5; x.strokeStyle = 'rgba(0,0,0,.25)'; x.stroke();
+      x.beginPath(); x.moveTo(-r, 0); x.lineTo(r, 0); x.strokeStyle = 'rgba(0,0,0,.18)'; x.stroke();
+      x.beginPath(); x.arc(-r * .35, -r * .45, r * .22, 0, Math.PI * 2); x.fillStyle = 'rgba(255,255,255,.55)'; x.fill();
+      sprites.set(key, c); return c;
+    }
     function size() {
-      const rect = cv.getBoundingClientRect(); const dpr = window.devicePixelRatio || 1;
+      const rect = cv.getBoundingClientRect();
       if (!rect.width) return;
-      W = rect.width; cv.width = W * dpr; cv.height = W * dpr; ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
-      R = W / 2; r = Math.max(10, W * 0.075);
+      const oldR = R;
+      dpr = Math.min(2, window.devicePixelRatio || 1);
+      W = rect.width; cv.width = Math.round(W * dpr); cv.height = Math.round(W * dpr); ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+      R = W / 2; r = Math.max(10, Math.round(W * 0.075));
+      sprites.clear();
+      if (oldR) { const k = R / oldR; balls.forEach(b => { b.x *= k; b.y *= k; }); }
       balls.forEach(b => b.r = r); wake();
     }
     new ResizeObserver(size).observe(cv);
@@ -146,74 +168,108 @@
         scaled.forEach(c => want.set(c.color, (want.get(c.color) || 0) + c.n));
       }
       const have = new Map(); balls.forEach(b => have.set(b.color, (have.get(b.color) || 0) + 1));
-      for (const [color, n] of have) { let extra = n - (want.get(color) || 0); balls = balls.filter(b => !(b.color === color && extra-- > 0)); }
-      for (const [color, n] of want) for (let k = (have.get(color) || 0); k < n; k++)
+      let changed = false;
+      for (const [color, n] of have) { let extra = n - (want.get(color) || 0); if (extra > 0) changed = true; balls = balls.filter(b => !(b.color === color && extra-- > 0)); }
+      for (const [color, n] of want) for (let k = (have.get(color) || 0); k < n; k++) {
+        changed = true;
         balls.push({ x: R + (Math.random() - .5) * R, y: R * 0.4 * Math.random() + r, vx: (Math.random() - .5) * 2, vy: 0, r, color, a: Math.random() * 6.28 });
-      wake();
+      }
+      if (changed) wake(); else if (!raf) draw();
     }
-    function wake() { asleep = 0; if (!raf) raf = requestAnimationFrame(step); }
+    function wake() { still = 0; wokeAt = performance.now(); if (!raf) { last = 0; acc = 0; raf = requestAnimationFrame(frame); } }
     function shake(ms) { shaking = performance.now() + ms; wake(); }
-    function step() {
-      raf = 0; if (!W) return;
-      const g = 0.35, isShaking = performance.now() < shaking && !reduceMotion;
+    function physics(isShaking) {
+      const g = 0.35;
       for (const b of balls) {
         if (isShaking && Math.random() < 0.25) { b.vx += (Math.random() - .5) * 6; b.vy -= Math.random() * 6; }
-        b.vy += g; b.x += b.vx; b.y += b.vy; b.vx *= 0.995; b.a += b.vx * 0.04;
+        b.vy += g; b.x += b.vx; b.y += b.vy; b.vx *= 0.99; b.vy *= 0.995; b.a += b.vx * 0.04;
         const dx = b.x - R, dy = b.y - R, d = Math.hypot(dx, dy) || 0.01, lim = R - b.r - 2;
         if (d > lim) {
           const nx = dx / d, ny = dy / d; b.x = R + nx * lim; b.y = R + ny * lim;
-          const vn = b.vx * nx + b.vy * ny; if (vn > 0) { b.vx -= 1.6 * vn * nx; b.vy -= 1.6 * vn * ny; b.vx *= 0.9; }
+          const vn = b.vx * nx + b.vy * ny; if (vn > 0) { b.vx -= 1.5 * vn * nx; b.vy -= 1.5 * vn * ny; b.vx *= 0.85; b.vy *= 0.85; }
         }
       }
-      for (let it = 0; it < 3; it++) for (let i = 0; i < balls.length; i++) for (let j = i + 1; j < balls.length; j++) {
-        const a = balls[i], c = balls[j]; const dx = c.x - a.x, dy = c.y - a.y, d = Math.hypot(dx, dy) || 0.01, min = a.r + c.r;
-        if (d < min) {
-          const nx = dx / d, ny = dy / d, o = (min - d) / 2;
+      const n = balls.length;
+      for (let it = 0; it < 2; it++) for (let i = 0; i < n; i++) {
+        const a = balls[i];
+        for (let j = i + 1; j < n; j++) {
+          const c = balls[j], dx = c.x - a.x, dy = c.y - a.y, min = a.r + c.r;
+          if (dx > min || dx < -min || dy > min || dy < -min) continue;
+          const d2 = dx * dx + dy * dy; if (d2 >= min * min) continue;
+          const d = Math.sqrt(d2) || 0.01, nx = dx / d, ny = dy / d, o = (min - d) / 2;
           a.x -= nx * o; a.y -= ny * o; c.x += nx * o; c.y += ny * o;
           const rv = (c.vx - a.vx) * nx + (c.vy - a.vy) * ny;
-          if (rv < 0) { const imp = -0.6 * rv; a.vx -= imp * nx; a.vy -= imp * ny; c.vx += imp * nx; c.vy += imp * ny; }
+          if (rv < 0) { const imp = -0.55 * rv; a.vx -= imp * nx; a.vy -= imp * ny; c.vx += imp * nx; c.vy += imp * ny; }
         }
       }
-      draw();
-      const energy = balls.reduce((s, b) => s + b.vx * b.vx + b.vy * b.vy, 0) / Math.max(1, balls.length);
-      asleep = (energy < 0.6 && !isShaking) ? asleep + 1 : 0;
-      if (asleep < 90) raf = requestAnimationFrame(step);
+    }
+    function frame(t) {
+      raf = 0; if (!W) return;
+      const now = performance.now(), isShaking = now < shaking && !reduceMotion;
+      const dt = last ? Math.min(100, t - last) : 16.67; last = t; acc += dt;
+      let steps = 0;
+      while (acc >= 16.67 && steps < 4) { physics(isShaking); acc -= 16.67; steps++; }
+      if (steps) draw();
+      let maxV = 0; for (const b of balls) maxV = Math.max(maxV, Math.abs(b.vx), Math.abs(b.vy));
+      still = (!isShaking && maxV < 0.9) ? still + steps : 0;
+      const tooLong = !isShaking && now - Math.max(wokeAt, shaking) > 3500;
+      if (still > 45 || tooLong || !balls.length) { balls.forEach(b => { b.vx = 0; b.vy = 0; }); draw(); return; }
+      raf = requestAnimationFrame(frame);
     }
     function draw() {
       ctx.clearRect(0, 0, W, W);
       for (const b of balls) {
-        ctx.save(); ctx.translate(b.x, b.y); ctx.rotate(b.a);
-        ctx.beginPath(); ctx.arc(0, 0, b.r, Math.PI, 0); ctx.closePath(); ctx.fillStyle = b.color; ctx.fill();
-        ctx.beginPath(); ctx.arc(0, 0, b.r, 0, Math.PI); ctx.closePath(); ctx.fillStyle = '#F3F4F0'; ctx.fill();
-        ctx.beginPath(); ctx.arc(0, 0, b.r, 0, Math.PI * 2); ctx.lineWidth = 1.5; ctx.strokeStyle = 'rgba(0,0,0,.25)'; ctx.stroke();
-        ctx.beginPath(); ctx.moveTo(-b.r, 0); ctx.lineTo(b.r, 0); ctx.strokeStyle = 'rgba(0,0,0,.18)'; ctx.stroke();
-        ctx.beginPath(); ctx.arc(-b.r * .35, -b.r * .45, b.r * .22, 0, Math.PI * 2); ctx.fillStyle = 'rgba(255,255,255,.55)'; ctx.fill();
-        ctx.restore();
+        const img = sprite(b.color), h = img.width / dpr / 2;
+        const cos = Math.cos(b.a), sin = Math.sin(b.a);
+        ctx.setTransform(cos * dpr, sin * dpr, -sin * dpr, cos * dpr, b.x * dpr, b.y * dpr);
+        ctx.drawImage(img, -h, -h, h * 2, h * 2);
       }
+      ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
     }
+    document.addEventListener('visibilitychange', () => { if (document.hidden && raf) { cancelAnimationFrame(raf); raf = 0; } });
     return { setTargets, shake };
   })();
 
   /* ---------- confetti ---------- */
   function confetti(mainColor) {
     if (reduceMotion) return;
-    const cv = $('#confetti'), ctx = cv.getContext('2d'); const dpr = window.devicePixelRatio || 1;
-    const W = cv.clientWidth, H = cv.clientHeight; cv.width = W * dpr; cv.height = H * dpr; ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    const cv = $('#confetti'), ctx = cv.getContext('2d'); const dpr = Math.min(1.5, window.devicePixelRatio || 1);
+    const W = cv.clientWidth, H = cv.clientHeight; cv.width = Math.round(W * dpr); cv.height = Math.round(H * dpr);
     const colors = [mainColor, mainColor, ...G.PALETTE, '#FFFFFF'];
     const cx = W / 2, cy = Math.min(H * 0.38, 260);
-    const parts = Array.from({ length: 160 }, () => {
+    const parts = Array.from({ length: 110 }, () => {
       const ang = Math.random() * Math.PI * 2, sp = 4 + Math.random() * 9;
       return { x: cx, y: cy, vx: Math.cos(ang) * sp, vy: Math.sin(ang) * sp - 5, w: 6 + Math.random() * 6, h: 4 + Math.random() * 6, rot: Math.random() * 6, vr: (Math.random() - .5) * .4, c: colors[(Math.random() * colors.length) | 0] };
     });
-    const t0 = performance.now();
+    const t0 = performance.now(); let last = t0;
     (function frame(t) {
-      const age = t - t0; ctx.clearRect(0, 0, W, H);
+      const age = t - t0, k = Math.min(3, (t - last) / 16.67) || 1; last = t;
+      ctx.setTransform(1, 0, 0, 1, 0, 0); ctx.clearRect(0, 0, cv.width, cv.height);
+      ctx.globalAlpha = Math.max(0, 1 - age / 3000);
       for (const p of parts) {
-        p.vy += 0.22; p.vx *= 0.985; p.x += p.vx; p.y += p.vy; p.rot += p.vr;
-        ctx.save(); ctx.globalAlpha = Math.max(0, 1 - age / 3200); ctx.translate(p.x, p.y); ctx.rotate(p.rot); ctx.fillStyle = p.c; ctx.fillRect(-p.w / 2, -p.h / 2, p.w, p.h * Math.abs(Math.cos(p.rot * 2))); ctx.restore();
+        p.vy += 0.22 * k; p.vx *= Math.pow(0.985, k); p.x += p.vx * k; p.y += p.vy * k; p.rot += p.vr * k;
+        if (p.y > H + 20) continue;
+        const cos = Math.cos(p.rot), sin = Math.sin(p.rot);
+        ctx.setTransform(cos * dpr, sin * dpr, -sin * dpr, cos * dpr, p.x * dpr, p.y * dpr);
+        ctx.fillStyle = p.c; ctx.fillRect(-p.w / 2, -p.h / 2, p.w, p.h * Math.abs(Math.cos(p.rot * 2)));
       }
-      if (age < 3200 && !$('#reveal').hidden) requestAnimationFrame(frame); else ctx.clearRect(0, 0, W, H);
+      ctx.globalAlpha = 1;
+      if (age < 3000 && !$('#reveal').hidden) requestAnimationFrame(frame);
+      else { ctx.setTransform(1, 0, 0, 1, 0, 0); ctx.clearRect(0, 0, cv.width, cv.height); }
     })(t0);
+  }
+
+  /* ---------- light rays behind the prize: painted once, then only rotated ---------- */
+  function paintRays(color) {
+    const el = document.querySelector('.rays'); if (!el) return;
+    const S = 620, c = document.createElement('canvas'); c.width = c.height = S;
+    const x = c.getContext('2d'), m = S / 2;
+    x.translate(m, m); x.fillStyle = color; x.globalAlpha = 0.55;
+    for (let i = 0; i < 15; i++) { x.beginPath(); x.moveTo(0, 0); x.arc(0, 0, m, (i * 24) * Math.PI / 180, (i * 24 + 10) * Math.PI / 180); x.closePath(); x.fill(); }
+    x.globalAlpha = 1; x.globalCompositeOperation = 'destination-in';
+    const g = x.createRadialGradient(0, 0, 0, 0, 0, m); g.addColorStop(0, '#000'); g.addColorStop(0.18, '#000'); g.addColorStop(0.68, 'rgba(0,0,0,0)');
+    x.fillStyle = g; x.fillRect(-m, -m, S, S);
+    el.style.backgroundImage = `url(${c.toDataURL()})`;
   }
 
   /* ---------- render ---------- */
@@ -284,6 +340,7 @@
   function startReveal(rec, color) {
     const rv = $('#reveal');
     rv.style.setProperty('--c', color);
+    paintRays(color);
     $('#big-cap').querySelector('.capsule').style.setProperty('--c', color);
     const pic = $('#prize-pic');
     pic.innerHTML = G.picHtml(rec.prizeImage, color, rec.prizeName);
