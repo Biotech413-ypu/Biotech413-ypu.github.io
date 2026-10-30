@@ -15,9 +15,9 @@
   --chrome: #E9EEEE;
   --ok: #2E7A44;
   --scrim: rgba(10, 16, 15, .62);
-  --font-display: "Huninn", "Noto Sans TC", "PingFang TC", "Microsoft JhengHei", sans-serif;
-  --font-body: "Noto Sans TC", "PingFang TC", "Microsoft JhengHei", system-ui, sans-serif;
-  --font-mono: "DM Mono", ui-monospace, "SFMono-Regular", Menlo, monospace;
+  --font-display: "Huninn", "PingFang TC", "Heiti TC", "Microsoft JhengHei", "Noto Sans TC", sans-serif;
+  --font-body: -apple-system, "PingFang TC", "Heiti TC", "Microsoft JhengHei", "Noto Sans TC", system-ui, sans-serif;
+  --font-mono: ui-monospace, "SF Mono", "SFMono-Regular", Menlo, Consolas, monospace;
 }
 @media (prefers-color-scheme: dark) {
   :root:not([data-theme="light"]) {
@@ -270,3 +270,5 @@ td button, .thumb-actions label, .thumb-actions button { white-space: nowrap; }
 .dome::after { filter: none; background: radial-gradient(ellipse at center, rgba(255,255,255,.5), rgba(255,255,255,0) 70%); }
 .dome, .big-cap, .cap-out, .knob { will-change: transform; }
 .prize-card.out .pic { filter: none; opacity: .45; }
+
+.prize-card .ct i { font-style: normal; }
