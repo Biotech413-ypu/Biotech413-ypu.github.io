@@ -1,0 +1,520 @@
+/* 扭蛋抽獎 — 前台扭蛋機 */
+(function () {
+  'use strict';
+  const G = window.Gacha;
+  const $ = s => document.querySelector(s);
+  const reduceMotion = matchMedia('(prefers-reduced-motion: reduce)').matches;
+  // Animation timing in milliseconds (crank, capsule drop, fly to centre, wobble before it opens).
+  const T = { crank: 1500, drop: 700, flyIn: 650, wobble: 1600 };
+  let data = G.read();
+  let busy = false, revealing = false;
+
+  const totalLeft = () => data.prizes.reduce((s, p) => s + Math.max(0, p.remaining | 0), 0);
+  const colorById = id => { const p = data.prizes.find(x => x.id === id); return G.colorOf(p, data.prizes); };
+  const sleep = ms => new Promise(r => setTimeout(r, ms));
+  function showMsg(text, isErr) { const el = $('#draw-msg'); el.textContent = text; el.classList.toggle('err', !!isErr); }
+
+  /* ---------- sound (synthesised with Web Audio, no audio files needed) ---------- */
+  const Sound = (() => {
+    let ctx = null, on = true;
+    try { on = localStorage.getItem('gacha-sound') !== 'off'; } catch (e) {}
+    // iPad / iPhone Safari: Web Audio is treated as "ambient" sound and is muted by silent mode.
+    // Asking for the "playback" session (Safari 17+) makes it behave like a video's sound.
+    try { if (navigator.audioSession) navigator.audioSession.type = 'playback'; } catch (e) {}
+    function ac() {
+      if (!on) return null;
+      if (!ctx) { const C = window.AudioContext || window.webkitAudioContext; if (!C) return null; ctx = new C(); }
+      if (ctx.state !== 'running') { try { ctx.resume(); } catch (e) {} }
+      return ctx;
+    }
+    // Safari only lets a page start sound from inside a tap, so unlock on the very first touch
+    // anywhere on the page: start the audio engine, play one silent sample, and play a silent
+    // <audio> clip (older iPadOS switches to "playback" this way, so silent mode no longer mutes it).
+    let unlocked = false, silentEl = null;
+    function silentWav() {
+      const n = 2205, buf = new ArrayBuffer(44 + n * 2), v = new DataView(buf);
+      const w = (o, s) => { for (let i = 0; i < s.length; i++) v.setUint8(o + i, s.charCodeAt(i)); };
+      w(0, 'RIFF'); v.setUint32(4, 36 + n * 2, true); w(8, 'WAVE'); w(12, 'fmt '); v.setUint32(16, 16, true);
+      v.setUint16(20, 1, true); v.setUint16(22, 1, true); v.setUint32(24, 22050, true); v.setUint32(28, 44100, true);
+      v.setUint16(32, 2, true); v.setUint16(34, 16, true); w(36, 'data'); v.setUint32(40, n * 2, true);
+      return URL.createObjectURL(new Blob([buf], { type: 'audio/wav' }));
+    }
+    function unlock() {
+      if (!on) return;
+      const c = ac(); if (!c) return;
+      try { const b = c.createBuffer(1, 1, 22050), s = c.createBufferSource(); s.buffer = b; s.connect(c.destination); s.start(0); } catch (e) {}
+      if (!silentEl) {
+        try { silentEl = new Audio(silentWav()); silentEl.setAttribute('playsinline', ''); silentEl.loop = true; silentEl.volume = 0.01; } catch (e) {}
+      }
+      if (silentEl && silentEl.paused) { const p = silentEl.play(); if (p && p.catch) p.catch(() => {}); }
+      if (c.state === 'running') unlocked = true;
+      setTimeout(prerender, 50);
+    }
+    try { silentEl = new Audio(silentWav()); silentEl.setAttribute('playsinline', ''); silentEl.loop = true; silentEl.volume = 0.01; silentEl.preload = 'auto'; } catch (e) {}
+    ['pointerdown', 'touchend', 'mousedown', 'keydown'].forEach(ev =>
+      document.addEventListener(ev, () => { if (!unlocked) unlock(); }, { capture: true, passive: true }));
+    // Coming back to the tab (or after a phone call) Safari suspends audio again.
+    document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible') unlocked = false; });
+    // Each effect is synthesised once into a small audio clip (in the background, right after the
+    // first tap); playing it later is a single node, so a tap never waits on sound set-up.
+    const noises = new WeakMap();
+    function noiseBuf(c) {
+      if (noises.has(c)) return noises.get(c);
+      const b = c.createBuffer(1, Math.floor(c.sampleRate * 0.5), c.sampleRate);
+      const d = b.getChannelData(0); for (let i = 0; i < d.length; i++) d[i] = Math.random() * 2 - 1;
+      noises.set(c, b); return b;
+    }
+    function click(c, t, freq, gain, dur, q) {
+      const s = c.createBufferSource(), f = c.createBiquadFilter(), g = c.createGain();
+      s.buffer = noiseBuf(c); f.type = 'bandpass'; f.frequency.value = freq; f.Q.value = q || 3;
+      g.gain.setValueAtTime(gain, t); g.gain.exponentialRampToValueAtTime(0.0008, t + dur);
+      s.connect(f); f.connect(g); g.connect(c.destination); s.start(t, Math.random() * 0.4); s.stop(t + dur + 0.02);
+    }
+    function tone(c, t, freq, dur, type, gain, endFreq) {
+      const o = c.createOscillator(), g = c.createGain();
+      o.type = type || 'sine'; o.frequency.setValueAtTime(freq, t);
+      if (endFreq) o.frequency.exponentialRampToValueAtTime(endFreq, t + dur);
+      g.gain.setValueAtTime(0.0001, t); g.gain.exponentialRampToValueAtTime(gain, t + 0.01); g.gain.exponentialRampToValueAtTime(0.0008, t + dur);
+      o.connect(g); g.connect(c.destination); o.start(t); o.stop(t + dur + 0.02);
+    }
+    const crankSec = T.crank / 1000;
+    const RECIPES = {
+      // Ratchet of the crank plus capsules clattering in the dome.
+      crank: { len: crankSec + 0.2, play(c, t0) {
+        for (let i = 0; i < 16; i++) { const t = t0 + (i / 16) * crankSec * 0.75; click(c, t, 2600 + Math.random() * 500, 0.5, 0.03, 6); click(c, t + 0.006, 1200, 0.2, 0.04, 2); }
+        for (let i = 0; i < 26; i++) click(c, t0 + Math.random() * crankSec, 1400 + Math.random() * 2200, 0.16 + Math.random() * 0.12, 0.05, 5);
+      } },
+      // Capsule landing in the chute: a hollow plastic knock and two small bounces.
+      drop: { len: 0.55, play(c, t) {
+        [[0, 1], [0.17, 0.5], [0.28, 0.25]].forEach(([dt, k]) => { tone(c, t + dt, 230, 0.16, 'sine', 0.45 * k, 90); click(c, t + dt, 1800, 0.35 * k, 0.04, 4); });
+      } },
+      // Small rattles while the capsule wobbles.
+      rattle: { len: 1.65, play(c, t0) {
+        [0.1, 0.2, 0.75, 0.88, 1.2, 1.3, 1.4, 1.5].forEach(dt => click(c, t0 + dt, 2000 + Math.random() * 1500, 0.22, 0.04, 5));
+      } },
+      // The two halves popping apart, then a little fanfare.
+      pop: { len: 1.15, play(c, t) {
+        click(c, t, 3200, 0.7, 0.09, 1.5); tone(c, t, 320, 0.18, 'triangle', 0.3, 1100);
+        [523.25, 659.25, 783.99, 1046.5].forEach((f, i) => tone(c, t + 0.12 + i * 0.09, f, i === 3 ? 0.7 : 0.2, 'triangle', 0.16));
+        [1318.5, 1567.98].forEach((f, i) => tone(c, t + 0.5 + i * 0.07, f, 0.5, 'sine', 0.06));
+      } }
+    };
+    const clips = {};
+    let prerendering = false;
+    function prerender() {
+      if (prerendering || !ctx) return; prerendering = true;
+      const O = window.OfflineAudioContext || window.webkitOfflineAudioContext; if (!O) return;
+      const sr = ctx.sampleRate, names = Object.keys(RECIPES);
+      // One clip at a time, spaced out, so the work never lands on an animation frame in a burst.
+      (function next(i) {
+        if (i >= names.length) return;
+        const name = names[i], r = RECIPES[name];
+        try {
+          const oc = new O(1, Math.ceil(sr * r.len), sr);
+          r.play(oc, 0.005);
+          const done = buf => { clips[name] = buf; setTimeout(() => next(i + 1), 120); };
+          const pr = oc.startRendering();
+          if (pr && pr.then) pr.then(done, () => setTimeout(() => next(i + 1), 120)); else oc.oncomplete = e => done(e.renderedBuffer);
+        } catch (e) { setTimeout(() => next(i + 1), 120); }
+      })(0);
+    }
+    function play(name) {
+      const c = ac(); if (!c) return;
+      const buf = clips[name];
+      if (buf) { const s = c.createBufferSource(); s.buffer = buf; s.connect(c.destination); s.start(c.currentTime + 0.01); }
+      else RECIPES[name].play(c, c.currentTime + 0.02); // first tap, before the clips are ready
+    }
+    return {
+      get on() { return on; },
+      set(v) { on = v; try { localStorage.setItem('gacha-sound', v ? 'on' : 'off'); } catch (e) {} if (v) { unlocked = false; unlock(); } else if (silentEl) silentEl.pause(); },
+      crank() { play('crank'); },
+      drop() { play('drop'); },
+      rattle() { play('rattle'); },
+      pop() { play('pop'); },
+      prerender
+    };
+  })();
+  function syncSoundBtn() {
+    const b = $('#sound-btn'); b.setAttribute('aria-pressed', String(Sound.on));
+    $('#sound-label').textContent = Sound.on ? '音效開' : '音效關';
+    b.querySelector('.wave').toggleAttribute('hidden', !Sound.on);
+    b.querySelector('.mute').toggleAttribute('hidden', Sound.on);
+  }
+
+  /* ---------- machine colour ---------- */
+  function shade(hex, k) {
+    const n = parseInt(hex.slice(1), 16); const r = n >> 16, g = (n >> 8) & 255, b = n & 255;
+    const f = v => Math.max(0, Math.min(255, Math.round(v * k)));
+    return '#' + [f(r), f(g), f(b)].map(v => v.toString(16).padStart(2, '0')).join('');
+  }
+  function inkFor(hex) {
+    const n = parseInt(hex.slice(1), 16); const lin = v => { v /= 255; return v <= .03928 ? v / 12.92 : Math.pow((v + .055) / 1.055, 2.4); };
+    const L = .2126 * lin(n >> 16) + .7152 * lin((n >> 8) & 255) + .0722 * lin(n & 255);
+    return L > 0.4 ? '#1B2422' : '#FFFFFF';
+  }
+  function applyMachineColor(c) {
+    const color = G.validColor(c) ? c : '#D7372B';
+    const st = document.documentElement.style;
+    st.setProperty('--machine', color); st.setProperty('--machine-deep', shade(color, 0.72)); st.setProperty('--machine-ink', inkFor(color));
+  }
+
+  /* ---------- capsules bouncing in the dome ---------- */
+  // Performance notes (Safari / iPad):
+  //  - physics runs at a fixed 60 steps per second, so 120 Hz iPads don't do double the work;
+  //  - each capsule colour is drawn once into a small sprite and then just stamped;
+  //  - the loop stops as soon as the capsules settle (and never runs longer than a few seconds),
+  //    so an idle machine costs nothing.
+  const dome = (() => {
+    const cv = $('#dome-canvas'), ctx = cv.getContext('2d');
+    let W = 0, R = 0, r = 0, dpr = 1, balls = [], firstFill = true, raf = 0, shaking = 0, still = 0, wokeAt = 0, last = 0, acc = 0;
+    const sprites = new Map();
+    function sprite(color) {
+      const key = color + '|' + r + '|' + dpr;
+      if (sprites.has(key)) return sprites.get(key);
+      const size = Math.ceil((r * 2 + 4) * dpr), c = document.createElement('canvas'); c.width = c.height = size;
+      const x = c.getContext('2d'); x.scale(dpr, dpr); x.translate(r + 2, r + 2);
+      x.beginPath(); x.arc(0, 0, r, Math.PI, 0); x.closePath(); x.fillStyle = color; x.fill();
+      x.beginPath(); x.arc(0, 0, r, 0, Math.PI); x.closePath(); x.fillStyle = '#F3F4F0'; x.fill();
+      x.beginPath(); x.arc(0, 0, r, 0, Math.PI * 2); x.lineWidth = 1.5; x.strokeStyle = 'rgba(0,0,0,.25)'; x.stroke();
+      x.beginPath(); x.moveTo(-r, 0); x.lineTo(r, 0); x.strokeStyle = 'rgba(0,0,0,.18)'; x.stroke();
+      x.beginPath(); x.arc(-r * .35, -r * .45, r * .22, 0, Math.PI * 2); x.fillStyle = 'rgba(255,255,255,.55)'; x.fill();
+      sprites.set(key, c); return c;
+    }
+    function size() {
+      const rect = cv.getBoundingClientRect();
+      if (!rect.width) return;
+      const oldR = R;
+      dpr = Math.min(2, window.devicePixelRatio || 1);
+      W = rect.width; cv.width = Math.round(W * dpr); cv.height = Math.round(W * dpr); ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+      R = W / 2; r = Math.max(10, Math.round(W * 0.075));
+      sprites.clear();
+      if (oldR) { const k = R / oldR; balls.forEach(b => { b.x *= k; b.y *= k; }); }
+      else balls.forEach(b => { b.x = R + (Math.random() - .5) * R; b.y = R * 0.6 * Math.random() + r; });
+      balls.forEach(b => b.r = r);
+      if (firstFill && balls.length && !reduceMotion) { settleNow(); firstFill = false; } else if (!oldR) draw(); else wake();
+    }
+    new ResizeObserver(size).observe(cv);
+    function setTargets(counts) {
+      const total = counts.reduce((s, c) => s + c.n, 0);
+      const cap = 34, want = new Map();
+      if (total > 0) {
+        const room = Math.min(cap, total);
+        const scaled = counts.map(c => ({ color: c.color, n: c.n > 0 ? Math.max(1, Math.round(c.n / total * room)) : 0 }));
+        let sum = scaled.reduce((s, c) => s + c.n, 0);
+        while (sum > room) { const big = scaled.reduce((a, b) => b.n > a.n ? b : a); big.n--; sum--; }
+        scaled.forEach(c => want.set(c.color, (want.get(c.color) || 0) + c.n));
+      }
+      const have = new Map(); balls.forEach(b => have.set(b.color, (have.get(b.color) || 0) + 1));
+      let changed = false;
+      for (const [color, n] of have) { let extra = n - (want.get(color) || 0); if (extra > 0) changed = true; balls = balls.filter(b => !(b.color === color && extra-- > 0)); }
+      for (const [color, n] of want) for (let k = (have.get(color) || 0); k < n; k++) {
+        changed = true;
+        balls.push({ x: R + (Math.random() - .5) * R, y: R * 0.4 * Math.random() + r, vx: (Math.random() - .5) * 2, vy: 0, r, color, a: Math.random() * 6.28 });
+      }
+      if (changed && firstFill && W && !reduceMotion) { settleNow(); firstFill = false; return; }
+      if (W) firstFill = false;
+      if (changed) wake(); else if (!raf) draw();
+    }
+    // Run the physics off-screen until everything rests, then paint a single frame.
+    function settleNow() {
+      for (let i = 0; i < 400; i++) {
+        physics(false);
+        let maxV = 0; for (const b of balls) maxV = Math.max(maxV, Math.abs(b.vx), Math.abs(b.vy));
+        if (i > 180 && maxV < 0.3) break;
+      }
+      balls.forEach(b => { b.vx = 0; b.vy = 0; });
+      draw();
+    }
+    function wake() { still = 0; wokeAt = performance.now(); if (!raf) { last = 0; acc = 0; raf = requestAnimationFrame(frame); } }
+    function shake(ms) { shaking = performance.now() + ms; wake(); }
+    function physics(isShaking) {
+      const g = 0.35;
+      for (const b of balls) {
+        if (isShaking && Math.random() < 0.25) { b.vx += (Math.random() - .5) * 6; b.vy -= Math.random() * 6; }
+        b.vy += g; b.x += b.vx; b.y += b.vy; b.vx *= 0.99; b.vy *= 0.995; b.a += b.vx * 0.04;
+        const dx = b.x - R, dy = b.y - R, d = Math.hypot(dx, dy) || 0.01, lim = R - b.r - 2;
+        if (d > lim) {
+          const nx = dx / d, ny = dy / d; b.x = R + nx * lim; b.y = R + ny * lim;
+          const vn = b.vx * nx + b.vy * ny; if (vn > 0) { b.vx -= 1.5 * vn * nx; b.vy -= 1.5 * vn * ny; b.vx *= 0.85; b.vy *= 0.85; }
+        }
+      }
+      const n = balls.length;
+      for (let it = 0; it < 2; it++) for (let i = 0; i < n; i++) {
+        const a = balls[i];
+        for (let j = i + 1; j < n; j++) {
+          const c = balls[j], dx = c.x - a.x, dy = c.y - a.y, min = a.r + c.r;
+          if (dx > min || dx < -min || dy > min || dy < -min) continue;
+          const d2 = dx * dx + dy * dy; if (d2 >= min * min) continue;
+          const d = Math.sqrt(d2) || 0.01, nx = dx / d, ny = dy / d, o = (min - d) / 2;
+          a.x -= nx * o; a.y -= ny * o; c.x += nx * o; c.y += ny * o;
+          const rv = (c.vx - a.vx) * nx + (c.vy - a.vy) * ny;
+          if (rv < 0) { const imp = -0.55 * rv; a.vx -= imp * nx; a.vy -= imp * ny; c.vx += imp * nx; c.vy += imp * ny; }
+        }
+      }
+    }
+    function frame(t) {
+      raf = 0; if (!W) return;
+      const now = performance.now(), isShaking = now < shaking && !reduceMotion;
+      const dt = last ? Math.min(100, t - last) : 16.67; last = t; acc += dt;
+      let steps = 0;
+      while (acc >= 16.67 && steps < 4) { physics(isShaking); acc -= 16.67; steps++; }
+      if (steps) draw();
+      let maxV = 0; for (const b of balls) maxV = Math.max(maxV, Math.abs(b.vx), Math.abs(b.vy));
+      still = (!isShaking && maxV < 0.9) ? still + steps : 0;
+      const tooLong = !isShaking && now - Math.max(wokeAt, shaking) > 3500;
+      if (still > 45 || tooLong || !balls.length) { balls.forEach(b => { b.vx = 0; b.vy = 0; }); draw(); return; }
+      raf = requestAnimationFrame(frame);
+    }
+    function draw() {
+      ctx.clearRect(0, 0, W, W);
+      for (const b of balls) {
+        const img = sprite(b.color), h = img.width / dpr / 2;
+        const cos = Math.cos(b.a), sin = Math.sin(b.a);
+        ctx.setTransform(cos * dpr, sin * dpr, -sin * dpr, cos * dpr, b.x * dpr, b.y * dpr);
+        ctx.drawImage(img, -h, -h, h * 2, h * 2);
+      }
+      ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    }
+    document.addEventListener('visibilitychange', () => { if (document.hidden && raf) { cancelAnimationFrame(raf); raf = 0; } });
+    return { setTargets, shake };
+  })();
+
+  /* ---------- confetti ---------- */
+  // Lightweight on purpose: a canvas only as wide as the burst (not the whole screen), at 1x
+  // resolution (paper bits don't need retina), only the area the pieces covered is cleared, and
+  // pieces are drawn grouped by colour.
+  const confettiSize = { W: 0, H: 0, left: 0 };
+  function sizeConfetti() {
+    const cv = $('#confetti');
+    const vw = window.innerWidth, H = window.innerHeight, W = Math.min(vw, 900);
+    if (W === confettiSize.W && H === confettiSize.H) return;
+    cv.width = W; cv.height = H;
+    const left = Math.round((vw - W) / 2);
+    cv.style.cssText = `left:${left}px;width:${W}px;height:${H}px;right:auto;bottom:auto`;
+    Object.assign(confettiSize, { W, H, left });
+  }
+  window.addEventListener('resize', () => { confettiSize.W = 0; });
+  function confetti(mainColor) {
+    if (reduceMotion) return;
+    const cv = $('#confetti'), ctx = cv.getContext('2d');
+    if (!confettiSize.W) sizeConfetti();
+    const { W, H } = confettiSize;
+    const colors = [mainColor, mainColor, mainColor, ...G.PALETTE.slice(0, 5), '#FFFFFF'];
+    const cx = W / 2, cy = Math.min(H * 0.38, 260);
+    const groups = new Map();
+    for (let i = 0; i < 90; i++) {
+      const ang = Math.random() * Math.PI * 2, sp = 4 + Math.random() * 8;
+      const c = colors[(Math.random() * colors.length) | 0];
+      if (!groups.has(c)) groups.set(c, []);
+      groups.get(c).push({ x: cx, y: cy, vx: Math.cos(ang) * sp, vy: Math.sin(ang) * sp - 5, w: 6 + Math.random() * 6, h: 4 + Math.random() * 6, rot: Math.random() * 6, vr: (Math.random() - .5) * .4 });
+    }
+    let box = null; // area painted last frame
+    const t0 = performance.now(); let last = t0;
+    (function frame(t) {
+      const age = t - t0, k = Math.min(3, (t - last) / 16.67) || 1; last = t;
+      ctx.setTransform(1, 0, 0, 1, 0, 0);
+      if (box) ctx.clearRect(box[0], box[1], box[2] - box[0], box[3] - box[1]);
+      let x0 = W, y0 = H, x1 = 0, y1 = 0, alive = 0;
+      ctx.globalAlpha = Math.max(0, 1 - age / 3000);
+      const damp = Math.pow(0.985, k);
+      for (const [c, ps] of groups) {
+        ctx.fillStyle = c;
+        for (const p of ps) {
+          p.vy += 0.22 * k; p.vx *= damp; p.x += p.vx * k; p.y += p.vy * k; p.rot += p.vr * k;
+          if (p.y > H + 20 || p.x < -20 || p.x > W + 20) continue;
+          alive++;
+          const cos = Math.cos(p.rot), sin = Math.sin(p.rot);
+          ctx.setTransform(cos, sin, -sin, cos, p.x, p.y);
+          ctx.fillRect(-p.w / 2, -p.h / 2, p.w, p.h * Math.abs(Math.cos(p.rot * 2)));
+          if (p.x < x0) x0 = p.x; if (p.x > x1) x1 = p.x; if (p.y < y0) y0 = p.y; if (p.y > y1) y1 = p.y;
+        }
+      }
+      ctx.globalAlpha = 1;
+      box = alive ? [Math.max(0, x0 - 10), Math.max(0, y0 - 10), Math.min(W, x1 + 10), Math.min(H, y1 + 10)] : null;
+      if (alive && age < 3000 && !$('#reveal').hidden) requestAnimationFrame(frame);
+      else { ctx.setTransform(1, 0, 0, 1, 0, 0); ctx.clearRect(0, 0, W, H); }
+    })(t0);
+  }
+
+  /* ---------- light rays behind the prize: painted once per colour, then only rotated ---------- */
+  const rayCache = new Map();
+  function rayCanvas(color) {
+    if (rayCache.has(color)) return rayCache.get(color);
+    const S = 512, c = document.createElement('canvas'); c.width = c.height = S;
+    const x = c.getContext('2d'), m = S / 2;
+    x.translate(m, m); x.fillStyle = color; x.globalAlpha = 0.55;
+    for (let i = 0; i < 15; i++) { x.beginPath(); x.moveTo(0, 0); x.arc(0, 0, m, (i * 24) * Math.PI / 180, (i * 24 + 10) * Math.PI / 180); x.closePath(); x.fill(); }
+    x.globalAlpha = 1; x.globalCompositeOperation = 'destination-in';
+    const g = x.createRadialGradient(0, 0, 0, 0, 0, m); g.addColorStop(0, '#000'); g.addColorStop(0.18, '#000'); g.addColorStop(0.68, 'rgba(0,0,0,0)');
+    x.fillStyle = g; x.fillRect(-m, -m, S, S);
+    c.style.cssText = 'width:100%;height:100%;display:block';
+    rayCache.set(color, c); return c;
+  }
+  function paintRays(color) {
+    const el = document.querySelector('.rays'); if (!el) return;
+    const c = rayCanvas(color);
+    if (el.firstChild !== c) el.replaceChildren(c);
+  }
+
+  /* ---------- get the reveal ready while nothing is happening ---------- */
+  // Rays for every prize colour, decoded prize pictures and the confetti canvas are prepared in
+  // small pieces when the page is idle, so the opening moment only has to show them.
+  const idle = cb => (window.requestIdleCallback ? requestIdleCallback(cb, { timeout: 1500 }) : setTimeout(cb, 200));
+  const decoded = new Map();
+  let prepKey = '';
+  function prepareReveal() {
+    const key = JSON.stringify(data.prizes.map(p => [p.image, G.colorOf(p, data.prizes)]));
+    if (key === prepKey) return; prepKey = key;
+    const jobs = [];
+    data.prizes.forEach(p => {
+      const c = G.colorOf(p, data.prizes);
+      jobs.push(() => rayCanvas(c));
+      if (p.image && !decoded.has(p.image)) jobs.push(async () => {
+        try {
+          const u = await G.images.url(p.image); if (!u) return;
+          const im = new Image(); im.decoding = 'async'; im.src = u;
+          if (im.decode) await im.decode();
+          decoded.set(p.image, im);
+        } catch (e) {}
+      });
+    });
+    jobs.push(sizeConfetti);
+    (function run() { const j = jobs.shift(); if (!j) return; idle(async () => { await j(); run(); }); })();
+  }
+  function prizePicture(rec, color) {
+    const im = rec.prizeImage && decoded.get(rec.prizeImage);
+    if (im) { const c = im.cloneNode(); c.alt = rec.prizeName; return c; }
+    const span = document.createElement('span'); span.innerHTML = G.picHtml(rec.prizeImage, color, rec.prizeName);
+    return span.firstChild;
+  }
+
+  /* ---------- render ---------- */
+  function setHint() {
+    const left = totalLeft();
+    let t;
+    if (busy) t = '喀啦喀啦…';
+    else if (!data.prizes.length) t = '扭蛋機還沒放入獎品，請先到後台新增';
+    else if (left <= 0) t = '扭蛋都被扭完了，感謝參與！';
+    else t = '轉動旋鈕扭一顆';
+    $('#hint').textContent = t;
+  }
+
+  let showcaseKey = '';
+  function render() {
+    const title = data.title || '扭蛋抽獎';
+    $('#title').textContent = title; document.title = title;
+    applyMachineColor(data.machineColor);
+    const left = totalLeft();
+    $('#left-count').textContent = left;
+    $('#knob').disabled = busy || revealing || left <= 0;
+    const kinds = data.prizes.filter(p => p.remaining > 0).length;
+    $('#kinds-count').textContent = data.prizes.length ? `${kinds} 種可扭` : '';
+    setHint();
+    dome.setTargets(data.prizes.map(p => ({ color: G.colorOf(p, data.prizes), n: Math.max(0, p.remaining | 0) })));
+
+    const sc = $('#showcase');
+    const key = JSON.stringify(data.prizes.map(p => [p.id, p.name, p.image, G.colorOf(p, data.prizes)]));
+    if (key !== showcaseKey) {
+      showcaseKey = key;
+      sc.innerHTML = data.prizes.length ? data.prizes.map(p => {
+        const c = G.colorOf(p, data.prizes);
+        return `<li class="prize-card" style="--c:${c}"><div class="pic">${G.picHtml(p.image, c, p.name)}</div><div class="meta"><span class="nm">${G.esc(p.name)}</span><span class="ct">剩 <b></b> / <i></i></span></div></li>`;
+      }).join('') : '<li class="empty">還沒有獎品。</li>';
+      G.hydrateImages(sc);
+    }
+    // Numbers only: no images are reloaded, so this is cheap even in the middle of an animation.
+    sc.querySelectorAll('.prize-card').forEach((li, i) => {
+      const p = data.prizes[i]; if (!p) return;
+      const rm = Math.max(0, p.remaining | 0);
+      li.classList.toggle('out', !rm);
+      const b = li.querySelector('.ct b'), t = li.querySelector('.ct i');
+      if (b.textContent !== String(rm)) b.textContent = rm;
+      if (t.textContent !== String(p.total | 0)) t.textContent = p.total | 0;
+    });
+
+  }
+
+  /* ---------- turning the knob ---------- */
+  let knobAngle = 0;
+  async function turn() {
+    if (busy || revealing || totalLeft() <= 0) return;
+    busy = true;
+    // Motion and sound start in the same instant; everything else waits until that frame is on screen.
+    knobAngle += 360; $('#knob').style.transform = `rotate(${knobAngle}deg)`;
+    if (!reduceMotion) $('#dome').classList.add('shake');
+    dome.shake(T.crank);
+    Sound.crank(T.crank);
+    $('#knob').disabled = true; $('#hint').textContent = '喀啦喀啦…';
+    const t0 = performance.now();
+    await new Promise(r => requestAnimationFrame(() => setTimeout(r, 0)));
+    showMsg('');
+    try {
+      const rec = await G.draw('');
+      const wait = T.crank - (performance.now() - t0); if (wait > 0) await sleep(wait);
+      $('#dome').classList.remove('shake');
+      if (!rec) { showMsg('扭蛋已經扭完了。'); return; }
+      const c = G.validColor(rec.prizeColor) ? rec.prizeColor : colorById(rec.prizeId);
+      const out = $('#cap-out');
+      $('#cap-out-capsule').style.setProperty('--c', c);
+      out.hidden = false; out.classList.remove('drop'); void out.offsetWidth; out.classList.add('drop');
+      setTimeout(() => Sound.drop(), reduceMotion ? 0 : 450);
+      revealing = true;
+      await sleep(reduceMotion ? 200 : 900);
+      startReveal(rec, c);
+    } catch (err) {
+      $('#dome').classList.remove('shake');
+      showMsg('這次沒扭成功，獎品數量沒有變動，請再轉一次。（' + (err && err.message || 'error') + '）', true);
+    } finally {
+      busy = false; render();
+    }
+  }
+
+  /* ---------- opening animation ---------- */
+  let openTimer = null, opened = false;
+  function startReveal(rec, color) {
+    const rv = $('#reveal');
+    rv.style.setProperty('--c', color);
+    paintRays(color);
+    $('#big-cap').querySelector('.capsule').style.setProperty('--c', color);
+    const pic = $('#prize-pic');
+    pic.replaceChildren(prizePicture(rec, color));
+    G.hydrateImages(pic);
+    $('#prize-name').textContent = rec.prizeName;
+    $('#prize-sub').textContent = '第 ' + G.pad(rec.seq) + ' 顆';
+    $('#cap-out').hidden = true;
+    opened = false;
+    rv.className = 'reveal'; rv.hidden = false;
+    $('#big-cap').focus();
+    if (reduceMotion) { openCapsule(); return; }
+    requestAnimationFrame(() => {
+      rv.classList.add('in');
+      setTimeout(() => { if (!opened) { rv.classList.remove('in'); rv.classList.add('wobble'); Sound.rattle(); } }, T.flyIn);
+      openTimer = setTimeout(openCapsule, T.flyIn + T.wobble + 100);
+    });
+  }
+  function openCapsule() {
+    if (opened || $('#reveal').hidden) return;
+    opened = true; clearTimeout(openTimer);
+    const rv = $('#reveal');
+    rv.classList.remove('in', 'wobble'); rv.classList.add('opened');
+    Sound.pop();
+    confetti(rv.style.getPropertyValue('--c') || G.PALETTE[0]);
+    setTimeout(() => $('#reveal-close').focus(), 500);
+  }
+  function closeReveal() {
+    if (!opened) { openCapsule(); return; }
+    $('#reveal').hidden = true; $('#reveal').className = 'reveal';
+    revealing = false; render(); $('#knob').focus();
+  }
+
+  /* ---------- boot ---------- */
+  $('#knob').addEventListener('click', turn);
+  $('#big-cap').addEventListener('click', openCapsule);
+  $('#big-cap').addEventListener('keydown', e => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); openCapsule(); } });
+  $('#reveal-close').addEventListener('click', closeReveal);
+  $('#reveal').addEventListener('click', e => { if (e.target.id === 'reveal') closeReveal(); });
+  document.addEventListener('keydown', e => { if (e.key === 'Escape' && !$('#reveal').hidden) closeReveal(); });
+  $('#sound-btn').addEventListener('click', () => { Sound.set(!Sound.on); syncSoundBtn(); });
+  syncSoundBtn();
+  G.subscribe(d => { data = d; render(); prepareReveal(); });
+})();
