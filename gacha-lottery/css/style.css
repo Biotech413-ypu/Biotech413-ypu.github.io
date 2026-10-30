@@ -240,3 +240,7 @@ td input[type=number] { width: 86px; }
 select { font: inherit; color: var(--ink); background: var(--surface); border: 1px solid var(--line); border-radius: 8px; padding: 8px 10px; min-width: 0; max-width: 100%; }
 .check { display: inline-flex; align-items: center; gap: 6px; font-size: 14px; }
 code { font-family: var(--font-mono); font-size: 13px; background: var(--sunken); border: 1px solid var(--line); border-radius: 4px; padding: 0 4px; }
+
+/* empty-state rows: span the full width instead of sitting in the first grid column */
+.log li.empty { display: block; }
+.showcase li.empty { grid-column: 1 / -1; }
