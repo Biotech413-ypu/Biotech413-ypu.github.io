@@ -244,3 +244,19 @@ code { font-family: var(--font-mono); font-size: 13px; background: var(--sunken)
 /* empty-state rows: span the full width instead of sitting in the first grid column */
 .log li.empty { display: block; }
 .showcase li.empty { grid-column: 1 / -1; }
+
+/* ---------- tablets (iPad) ---------- */
+/* No double-tap zoom or grey flash when tapping the crank. */
+button, .big-cap, label { touch-action: manipulation; -webkit-tap-highlight-color: transparent; }
+/* Keep the whole machine, crank included, above the fold when Safari's bars eat into the height. */
+.machine { width: min(100%, 380px, calc((100svh - 230px) * 0.6)); min-width: 260px; }
+.under { width: min(100%, 380px); }
+/* Portrait tablet: one column, a bigger machine, prizes underneath. */
+@media (max-width: 1024px) and (orientation: portrait) and (min-width: 600px) {
+  .draw-grid { grid-template-columns: minmax(0, 1fr); }
+  .machine { width: min(100%, 470px, calc((100svh - 330px) * 0.6)); }
+  .under { width: min(100%, 470px); }
+  .showcase { grid-template-columns: repeat(4, minmax(0, 1fr)); }
+}
+/* Admin table: keep short buttons on one line. */
+td button, .thumb-actions label, .thumb-actions button { white-space: nowrap; }
