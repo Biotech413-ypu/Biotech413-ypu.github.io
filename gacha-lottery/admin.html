@@ -7,7 +7,10 @@
 <title>扭蛋抽獎｜後台設定</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Huninn&family=Noto+Sans+TC:wght@400;500;700&family=DM+Mono:wght@400;500&display=swap">
+<!-- Only the rounded display face is downloaded, and it never blocks the first paint;
+     body text uses the device's own Chinese font (PingFang TC on iPad / Mac). -->
+<link rel="preload" as="style" href="https://fonts.googleapis.com/css2?family=Huninn&display=swap" onload="this.onload=null;this.rel='stylesheet'">
+<noscript><link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Huninn&display=swap"></noscript>
 <link rel="stylesheet" href="css/style.css">
 </head>
 <body>
