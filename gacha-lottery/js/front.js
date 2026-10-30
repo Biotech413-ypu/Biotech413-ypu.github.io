@@ -48,58 +48,90 @@
       }
       if (silentEl && silentEl.paused) { const p = silentEl.play(); if (p && p.catch) p.catch(() => {}); }
       if (c.state === 'running') unlocked = true;
+      setTimeout(prerender, 50);
     }
     try { silentEl = new Audio(silentWav()); silentEl.setAttribute('playsinline', ''); silentEl.loop = true; silentEl.volume = 0.01; silentEl.preload = 'auto'; } catch (e) {}
     ['pointerdown', 'touchend', 'mousedown', 'keydown'].forEach(ev =>
       document.addEventListener(ev, () => { if (!unlocked) unlock(); }, { capture: true, passive: true }));
     // Coming back to the tab (or after a phone call) Safari suspends audio again.
     document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible') unlocked = false; });
-    let noise = null;
+    // Each effect is synthesised once into a small audio clip (in the background, right after the
+    // first tap); playing it later is a single node, so a tap never waits on sound set-up.
+    const noises = new WeakMap();
     function noiseBuf(c) {
-      if (noise) return noise;
-      noise = c.createBuffer(1, Math.floor(c.sampleRate * 0.5), c.sampleRate);
-      const d = noise.getChannelData(0); for (let i = 0; i < d.length; i++) d[i] = Math.random() * 2 - 1;
-      return noise;
+      if (noises.has(c)) return noises.get(c);
+      const b = c.createBuffer(1, Math.floor(c.sampleRate * 0.5), c.sampleRate);
+      const d = b.getChannelData(0); for (let i = 0; i < d.length; i++) d[i] = Math.random() * 2 - 1;
+      noises.set(c, b); return b;
     }
-    function click(t, freq, gain, dur, q) {
-      const c = ctx, s = c.createBufferSource(), f = c.createBiquadFilter(), g = c.createGain();
+    function click(c, t, freq, gain, dur, q) {
+      const s = c.createBufferSource(), f = c.createBiquadFilter(), g = c.createGain();
       s.buffer = noiseBuf(c); f.type = 'bandpass'; f.frequency.value = freq; f.Q.value = q || 3;
       g.gain.setValueAtTime(gain, t); g.gain.exponentialRampToValueAtTime(0.0008, t + dur);
-      s.connect(f).connect(g).connect(c.destination); s.start(t, Math.random() * 0.4); s.stop(t + dur + 0.02);
+      s.connect(f); f.connect(g); g.connect(c.destination); s.start(t, Math.random() * 0.4); s.stop(t + dur + 0.02);
     }
-    function tone(t, freq, dur, type, gain, endFreq) {
-      const c = ctx, o = c.createOscillator(), g = c.createGain();
+    function tone(c, t, freq, dur, type, gain, endFreq) {
+      const o = c.createOscillator(), g = c.createGain();
       o.type = type || 'sine'; o.frequency.setValueAtTime(freq, t);
       if (endFreq) o.frequency.exponentialRampToValueAtTime(endFreq, t + dur);
       g.gain.setValueAtTime(0.0001, t); g.gain.exponentialRampToValueAtTime(gain, t + 0.01); g.gain.exponentialRampToValueAtTime(0.0008, t + dur);
-      o.connect(g).connect(c.destination); o.start(t); o.stop(t + dur + 0.02);
+      o.connect(g); g.connect(c.destination); o.start(t); o.stop(t + dur + 0.02);
+    }
+    const crankSec = T.crank / 1000;
+    const RECIPES = {
+      // Ratchet of the crank plus capsules clattering in the dome.
+      crank: { len: crankSec + 0.2, play(c, t0) {
+        for (let i = 0; i < 16; i++) { const t = t0 + (i / 16) * crankSec * 0.75; click(c, t, 2600 + Math.random() * 500, 0.5, 0.03, 6); click(c, t + 0.006, 1200, 0.2, 0.04, 2); }
+        for (let i = 0; i < 26; i++) click(c, t0 + Math.random() * crankSec, 1400 + Math.random() * 2200, 0.16 + Math.random() * 0.12, 0.05, 5);
+      } },
+      // Capsule landing in the chute: a hollow plastic knock and two small bounces.
+      drop: { len: 0.55, play(c, t) {
+        [[0, 1], [0.17, 0.5], [0.28, 0.25]].forEach(([dt, k]) => { tone(c, t + dt, 230, 0.16, 'sine', 0.45 * k, 90); click(c, t + dt, 1800, 0.35 * k, 0.04, 4); });
+      } },
+      // Small rattles while the capsule wobbles.
+      rattle: { len: 1.65, play(c, t0) {
+        [0.1, 0.2, 0.75, 0.88, 1.2, 1.3, 1.4, 1.5].forEach(dt => click(c, t0 + dt, 2000 + Math.random() * 1500, 0.22, 0.04, 5));
+      } },
+      // The two halves popping apart, then a little fanfare.
+      pop: { len: 1.15, play(c, t) {
+        click(c, t, 3200, 0.7, 0.09, 1.5); tone(c, t, 320, 0.18, 'triangle', 0.3, 1100);
+        [523.25, 659.25, 783.99, 1046.5].forEach((f, i) => tone(c, t + 0.12 + i * 0.09, f, i === 3 ? 0.7 : 0.2, 'triangle', 0.16));
+        [1318.5, 1567.98].forEach((f, i) => tone(c, t + 0.5 + i * 0.07, f, 0.5, 'sine', 0.06));
+      } }
+    };
+    const clips = {};
+    let prerendering = false;
+    function prerender() {
+      if (prerendering || !ctx) return; prerendering = true;
+      const O = window.OfflineAudioContext || window.webkitOfflineAudioContext; if (!O) return;
+      const sr = ctx.sampleRate, names = Object.keys(RECIPES);
+      // One clip at a time, spaced out, so the work never lands on an animation frame in a burst.
+      (function next(i) {
+        if (i >= names.length) return;
+        const name = names[i], r = RECIPES[name];
+        try {
+          const oc = new O(1, Math.ceil(sr * r.len), sr);
+          r.play(oc, 0.005);
+          const done = buf => { clips[name] = buf; setTimeout(() => next(i + 1), 120); };
+          const pr = oc.startRendering();
+          if (pr && pr.then) pr.then(done, () => setTimeout(() => next(i + 1), 120)); else oc.oncomplete = e => done(e.renderedBuffer);
+        } catch (e) { setTimeout(() => next(i + 1), 120); }
+      })(0);
+    }
+    function play(name) {
+      const c = ac(); if (!c) return;
+      const buf = clips[name];
+      if (buf) { const s = c.createBufferSource(); s.buffer = buf; s.connect(c.destination); s.start(c.currentTime + 0.01); }
+      else RECIPES[name].play(c, c.currentTime + 0.02); // first tap, before the clips are ready
     }
     return {
       get on() { return on; },
       set(v) { on = v; try { localStorage.setItem('gacha-sound', v ? 'on' : 'off'); } catch (e) {} if (v) { unlocked = false; unlock(); } else if (silentEl) silentEl.pause(); },
-      // Ratchet of the crank plus capsules clattering in the dome.
-      crank(ms) {
-        if (!ac()) return; const t0 = ctx.currentTime + 0.02, sec = ms / 1000;
-        for (let i = 0; i < 16; i++) { const t = t0 + (i / 16) * sec * 0.75; click(t, 2600 + Math.random() * 500, 0.5, 0.03, 6); click(t + 0.006, 1200, 0.2, 0.04, 2); }
-        for (let i = 0; i < 26; i++) click(t0 + Math.random() * sec, 1400 + Math.random() * 2200, 0.16 + Math.random() * 0.12, 0.05, 5);
-      },
-      // Capsule landing in the chute: a hollow plastic knock and two small bounces.
-      drop() {
-        if (!ac()) return; const t = ctx.currentTime + 0.02;
-        [[0, 1], [0.17, 0.5], [0.28, 0.25]].forEach(([dt, k]) => { tone(t + dt, 230, 0.16, 'sine', 0.45 * k, 90); click(t + dt, 1800, 0.35 * k, 0.04, 4); });
-      },
-      // Small rattles while the capsule wobbles.
-      rattle() {
-        if (!ac()) return; const t0 = ctx.currentTime;
-        [0.1, 0.2, 0.75, 0.88, 1.2, 1.3, 1.4, 1.5].forEach(dt => click(t0 + dt, 2000 + Math.random() * 1500, 0.22, 0.04, 5));
-      },
-      // The two halves popping apart, then a little fanfare.
-      pop() {
-        if (!ac()) return; const t = ctx.currentTime + 0.01;
-        click(t, 3200, 0.7, 0.09, 1.5); tone(t, 320, 0.18, 'triangle', 0.3, 1100);
-        [523.25, 659.25, 783.99, 1046.5].forEach((f, i) => tone(t + 0.12 + i * 0.09, f, i === 3 ? 0.7 : 0.2, 'triangle', 0.16));
-        [1318.5, 1567.98].forEach((f, i) => tone(t + 0.5 + i * 0.07, f, 0.5, 'sine', 0.06));
-      }
+      crank() { play('crank'); },
+      drop() { play('drop'); },
+      rattle() { play('rattle'); },
+      pop() { play('pop'); },
+      prerender
     };
   })();
   function syncSoundBtn() {
@@ -248,45 +280,112 @@
   })();
 
   /* ---------- confetti ---------- */
+  // Lightweight on purpose: a canvas only as wide as the burst (not the whole screen), at 1x
+  // resolution (paper bits don't need retina), only the area the pieces covered is cleared, and
+  // pieces are drawn grouped by colour.
+  const confettiSize = { W: 0, H: 0, left: 0 };
+  function sizeConfetti() {
+    const cv = $('#confetti');
+    const vw = window.innerWidth, H = window.innerHeight, W = Math.min(vw, 900);
+    if (W === confettiSize.W && H === confettiSize.H) return;
+    cv.width = W; cv.height = H;
+    const left = Math.round((vw - W) / 2);
+    cv.style.cssText = `left:${left}px;width:${W}px;height:${H}px;right:auto;bottom:auto`;
+    Object.assign(confettiSize, { W, H, left });
+  }
+  window.addEventListener('resize', () => { confettiSize.W = 0; });
   function confetti(mainColor) {
     if (reduceMotion) return;
-    const cv = $('#confetti'), ctx = cv.getContext('2d'); const dpr = Math.min(1.5, window.devicePixelRatio || 1);
-    const W = cv.clientWidth, H = cv.clientHeight; cv.width = Math.round(W * dpr); cv.height = Math.round(H * dpr);
-    const colors = [mainColor, mainColor, ...G.PALETTE, '#FFFFFF'];
+    const cv = $('#confetti'), ctx = cv.getContext('2d');
+    if (!confettiSize.W) sizeConfetti();
+    const { W, H } = confettiSize;
+    const colors = [mainColor, mainColor, mainColor, ...G.PALETTE.slice(0, 5), '#FFFFFF'];
     const cx = W / 2, cy = Math.min(H * 0.38, 260);
-    const parts = Array.from({ length: 110 }, () => {
-      const ang = Math.random() * Math.PI * 2, sp = 4 + Math.random() * 9;
-      return { x: cx, y: cy, vx: Math.cos(ang) * sp, vy: Math.sin(ang) * sp - 5, w: 6 + Math.random() * 6, h: 4 + Math.random() * 6, rot: Math.random() * 6, vr: (Math.random() - .5) * .4, c: colors[(Math.random() * colors.length) | 0] };
-    });
+    const groups = new Map();
+    for (let i = 0; i < 90; i++) {
+      const ang = Math.random() * Math.PI * 2, sp = 4 + Math.random() * 8;
+      const c = colors[(Math.random() * colors.length) | 0];
+      if (!groups.has(c)) groups.set(c, []);
+      groups.get(c).push({ x: cx, y: cy, vx: Math.cos(ang) * sp, vy: Math.sin(ang) * sp - 5, w: 6 + Math.random() * 6, h: 4 + Math.random() * 6, rot: Math.random() * 6, vr: (Math.random() - .5) * .4 });
+    }
+    let box = null; // area painted last frame
     const t0 = performance.now(); let last = t0;
     (function frame(t) {
       const age = t - t0, k = Math.min(3, (t - last) / 16.67) || 1; last = t;
-      ctx.setTransform(1, 0, 0, 1, 0, 0); ctx.clearRect(0, 0, cv.width, cv.height);
+      ctx.setTransform(1, 0, 0, 1, 0, 0);
+      if (box) ctx.clearRect(box[0], box[1], box[2] - box[0], box[3] - box[1]);
+      let x0 = W, y0 = H, x1 = 0, y1 = 0, alive = 0;
       ctx.globalAlpha = Math.max(0, 1 - age / 3000);
-      for (const p of parts) {
-        p.vy += 0.22 * k; p.vx *= Math.pow(0.985, k); p.x += p.vx * k; p.y += p.vy * k; p.rot += p.vr * k;
-        if (p.y > H + 20) continue;
-        const cos = Math.cos(p.rot), sin = Math.sin(p.rot);
-        ctx.setTransform(cos * dpr, sin * dpr, -sin * dpr, cos * dpr, p.x * dpr, p.y * dpr);
-        ctx.fillStyle = p.c; ctx.fillRect(-p.w / 2, -p.h / 2, p.w, p.h * Math.abs(Math.cos(p.rot * 2)));
+      const damp = Math.pow(0.985, k);
+      for (const [c, ps] of groups) {
+        ctx.fillStyle = c;
+        for (const p of ps) {
+          p.vy += 0.22 * k; p.vx *= damp; p.x += p.vx * k; p.y += p.vy * k; p.rot += p.vr * k;
+          if (p.y > H + 20 || p.x < -20 || p.x > W + 20) continue;
+          alive++;
+          const cos = Math.cos(p.rot), sin = Math.sin(p.rot);
+          ctx.setTransform(cos, sin, -sin, cos, p.x, p.y);
+          ctx.fillRect(-p.w / 2, -p.h / 2, p.w, p.h * Math.abs(Math.cos(p.rot * 2)));
+          if (p.x < x0) x0 = p.x; if (p.x > x1) x1 = p.x; if (p.y < y0) y0 = p.y; if (p.y > y1) y1 = p.y;
+        }
       }
       ctx.globalAlpha = 1;
-      if (age < 3000 && !$('#reveal').hidden) requestAnimationFrame(frame);
-      else { ctx.setTransform(1, 0, 0, 1, 0, 0); ctx.clearRect(0, 0, cv.width, cv.height); }
+      box = alive ? [Math.max(0, x0 - 10), Math.max(0, y0 - 10), Math.min(W, x1 + 10), Math.min(H, y1 + 10)] : null;
+      if (alive && age < 3000 && !$('#reveal').hidden) requestAnimationFrame(frame);
+      else { ctx.setTransform(1, 0, 0, 1, 0, 0); ctx.clearRect(0, 0, W, H); }
     })(t0);
   }
 
-  /* ---------- light rays behind the prize: painted once, then only rotated ---------- */
-  function paintRays(color) {
-    const el = document.querySelector('.rays'); if (!el) return;
-    const S = 620, c = document.createElement('canvas'); c.width = c.height = S;
+  /* ---------- light rays behind the prize: painted once per colour, then only rotated ---------- */
+  const rayCache = new Map();
+  function rayCanvas(color) {
+    if (rayCache.has(color)) return rayCache.get(color);
+    const S = 512, c = document.createElement('canvas'); c.width = c.height = S;
     const x = c.getContext('2d'), m = S / 2;
     x.translate(m, m); x.fillStyle = color; x.globalAlpha = 0.55;
     for (let i = 0; i < 15; i++) { x.beginPath(); x.moveTo(0, 0); x.arc(0, 0, m, (i * 24) * Math.PI / 180, (i * 24 + 10) * Math.PI / 180); x.closePath(); x.fill(); }
     x.globalAlpha = 1; x.globalCompositeOperation = 'destination-in';
     const g = x.createRadialGradient(0, 0, 0, 0, 0, m); g.addColorStop(0, '#000'); g.addColorStop(0.18, '#000'); g.addColorStop(0.68, 'rgba(0,0,0,0)');
     x.fillStyle = g; x.fillRect(-m, -m, S, S);
-    el.style.backgroundImage = `url(${c.toDataURL()})`;
+    c.style.cssText = 'width:100%;height:100%;display:block';
+    rayCache.set(color, c); return c;
+  }
+  function paintRays(color) {
+    const el = document.querySelector('.rays'); if (!el) return;
+    const c = rayCanvas(color);
+    if (el.firstChild !== c) el.replaceChildren(c);
+  }
+
+  /* ---------- get the reveal ready while nothing is happening ---------- */
+  // Rays for every prize colour, decoded prize pictures and the confetti canvas are prepared in
+  // small pieces when the page is idle, so the opening moment only has to show them.
+  const idle = cb => (window.requestIdleCallback ? requestIdleCallback(cb, { timeout: 1500 }) : setTimeout(cb, 200));
+  const decoded = new Map();
+  let prepKey = '';
+  function prepareReveal() {
+    const key = JSON.stringify(data.prizes.map(p => [p.image, G.colorOf(p, data.prizes)]));
+    if (key === prepKey) return; prepKey = key;
+    const jobs = [];
+    data.prizes.forEach(p => {
+      const c = G.colorOf(p, data.prizes);
+      jobs.push(() => rayCanvas(c));
+      if (p.image && !decoded.has(p.image)) jobs.push(async () => {
+        try {
+          const u = await G.images.url(p.image); if (!u) return;
+          const im = new Image(); im.decoding = 'async'; im.src = u;
+          if (im.decode) await im.decode();
+          decoded.set(p.image, im);
+        } catch (e) {}
+      });
+    });
+    jobs.push(sizeConfetti);
+    (function run() { const j = jobs.shift(); if (!j) return; idle(async () => { await j(); run(); }); })();
+  }
+  function prizePicture(rec, color) {
+    const im = rec.prizeImage && decoded.get(rec.prizeImage);
+    if (im) { const c = im.cloneNode(); c.alt = rec.prizeName; return c; }
+    const span = document.createElement('span'); span.innerHTML = G.picHtml(rec.prizeImage, color, rec.prizeName);
+    return span.firstChild;
   }
 
   /* ---------- render ---------- */
@@ -378,7 +477,7 @@
     paintRays(color);
     $('#big-cap').querySelector('.capsule').style.setProperty('--c', color);
     const pic = $('#prize-pic');
-    pic.innerHTML = G.picHtml(rec.prizeImage, color, rec.prizeName);
+    pic.replaceChildren(prizePicture(rec, color));
     G.hydrateImages(pic);
     $('#prize-name').textContent = rec.prizeName;
     $('#prize-sub').textContent = '第 ' + G.pad(rec.seq) + ' 顆';
@@ -417,5 +516,5 @@
   document.addEventListener('keydown', e => { if (e.key === 'Escape' && !$('#reveal').hidden) closeReveal(); });
   $('#sound-btn').addEventListener('click', () => { Sound.set(!Sound.on); syncSoundBtn(); });
   syncSoundBtn();
-  G.subscribe(d => { data = d; render(); });
+  G.subscribe(d => { data = d; render(); prepareReveal(); });
 })();
