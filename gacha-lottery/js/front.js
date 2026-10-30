@@ -4,6 +4,8 @@
   const G = window.Gacha;
   const $ = s => document.querySelector(s);
   const reduceMotion = matchMedia('(prefers-reduced-motion: reduce)').matches;
+  // Animation timing in milliseconds (crank, capsule drop, fly to centre, wobble before it opens).
+  const T = { crank: 1500, drop: 700, flyIn: 650, wobble: 1600 };
   let data = G.read();
   let busy = false, revealing = false;
 
@@ -47,6 +49,7 @@
       if (silentEl && silentEl.paused) { const p = silentEl.play(); if (p && p.catch) p.catch(() => {}); }
       if (c.state === 'running') unlocked = true;
     }
+    try { silentEl = new Audio(silentWav()); silentEl.setAttribute('playsinline', ''); silentEl.loop = true; silentEl.volume = 0.01; silentEl.preload = 'auto'; } catch (e) {}
     ['pointerdown', 'touchend', 'mousedown', 'keydown'].forEach(ev =>
       document.addEventListener(ev, () => { if (!unlocked) unlock(); }, { capture: true, passive: true }));
     // Coming back to the tab (or after a phone call) Safari suspends audio again.
@@ -283,6 +286,7 @@
     $('#hint').textContent = t;
   }
 
+  let showcaseKey = '';
   function render() {
     const title = data.title || '扭蛋抽獎';
     $('#title').textContent = title; document.title = title;
@@ -296,11 +300,24 @@
     dome.setTargets(data.prizes.map(p => ({ color: G.colorOf(p, data.prizes), n: Math.max(0, p.remaining | 0) })));
 
     const sc = $('#showcase');
-    sc.innerHTML = data.prizes.length ? data.prizes.map(p => {
-      const rm = Math.max(0, p.remaining | 0), c = G.colorOf(p, data.prizes);
-      return `<li class="prize-card ${rm ? '' : 'out'}" style="--c:${c}"><div class="pic">${G.picHtml(p.image, c, p.name)}</div><div class="meta"><span class="nm">${G.esc(p.name)}</span><span class="ct">剩 <b>${rm}</b> / ${p.total | 0}</span></div></li>`;
-    }).join('') : '<li class="empty">還沒有獎品。</li>';
-    G.hydrateImages(sc);
+    const key = JSON.stringify(data.prizes.map(p => [p.id, p.name, p.image, G.colorOf(p, data.prizes)]));
+    if (key !== showcaseKey) {
+      showcaseKey = key;
+      sc.innerHTML = data.prizes.length ? data.prizes.map(p => {
+        const c = G.colorOf(p, data.prizes);
+        return `<li class="prize-card" style="--c:${c}"><div class="pic">${G.picHtml(p.image, c, p.name)}</div><div class="meta"><span class="nm">${G.esc(p.name)}</span><span class="ct">剩 <b></b> / <i></i></span></div></li>`;
+      }).join('') : '<li class="empty">還沒有獎品。</li>';
+      G.hydrateImages(sc);
+    }
+    // Numbers only: no images are reloaded, so this is cheap even in the middle of an animation.
+    sc.querySelectorAll('.prize-card').forEach((li, i) => {
+      const p = data.prizes[i]; if (!p) return;
+      const rm = Math.max(0, p.remaining | 0);
+      li.classList.toggle('out', !rm);
+      const b = li.querySelector('.ct b'), t = li.querySelector('.ct i');
+      if (b.textContent !== String(rm)) b.textContent = rm;
+      if (t.textContent !== String(p.total | 0)) t.textContent = p.total | 0;
+    });
 
   }
 
@@ -308,15 +325,19 @@
   let knobAngle = 0;
   async function turn() {
     if (busy || revealing || totalLeft() <= 0) return;
-    busy = true; showMsg(''); render();
+    busy = true;
+    // Motion and sound start in the same instant; everything else waits until that frame is on screen.
     knobAngle += 360; $('#knob').style.transform = `rotate(${knobAngle}deg)`;
     if (!reduceMotion) $('#dome').classList.add('shake');
-    dome.shake(1500);
-    Sound.crank(1500);
+    dome.shake(T.crank);
+    Sound.crank(T.crank);
+    $('#knob').disabled = true; $('#hint').textContent = '喀啦喀啦…';
     const t0 = performance.now();
+    await new Promise(r => requestAnimationFrame(() => setTimeout(r, 0)));
+    showMsg('');
     try {
       const rec = await G.draw('');
-      const wait = 1500 - (performance.now() - t0); if (wait > 0) await sleep(wait);
+      const wait = T.crank - (performance.now() - t0); if (wait > 0) await sleep(wait);
       $('#dome').classList.remove('shake');
       if (!rec) { showMsg('扭蛋已經扭完了。'); return; }
       const c = G.validColor(rec.prizeColor) ? rec.prizeColor : colorById(rec.prizeId);
@@ -354,8 +375,8 @@
     if (reduceMotion) { openCapsule(); return; }
     requestAnimationFrame(() => {
       rv.classList.add('in');
-      setTimeout(() => { if (!opened) { rv.classList.remove('in'); rv.classList.add('wobble'); Sound.rattle(); } }, 650);
-      openTimer = setTimeout(openCapsule, 650 + 1700);
+      setTimeout(() => { if (!opened) { rv.classList.remove('in'); rv.classList.add('wobble'); Sound.rattle(); } }, T.flyIn);
+      openTimer = setTimeout(openCapsule, T.flyIn + T.wobble + 100);
     });
   }
   function openCapsule() {
