@@ -272,3 +272,18 @@ td button, .thumb-actions label, .thumb-actions button { white-space: nowrap; }
 .prize-card.out .pic { filter: none; opacity: .45; }
 
 .prize-card .ct i { font-style: normal; }
+
+/* ---------- reveal layer is built once and kept ready (hidden), so opening it needs no new layout ---------- */
+.reveal[hidden] { display: grid !important; visibility: hidden; pointer-events: none; }
+.reveal { contain: layout paint size; }
+.rays { overflow: hidden; border-radius: 50%; }
+.rays canvas { pointer-events: none; }
+/* Things that never move don't need their own GPU layer. */
+.knob, .cap-out { will-change: auto; }
+.knob:active, .reveal:not([hidden]) .big-cap { will-change: transform; }
+/* Elements that scale/fade during the opening get their own layer only while the reveal is up,
+   so their soft shadows are painted once instead of every frame. */
+.reveal:not([hidden]) .prize-pop,
+.reveal:not([hidden]) .capsule .top,
+.reveal:not([hidden]) .capsule .bot,
+.reveal:not([hidden]) .rays { will-change: transform, opacity; }
