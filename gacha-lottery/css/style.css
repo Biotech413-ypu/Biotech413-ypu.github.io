@@ -260,3 +260,13 @@ button, .big-cap, label { touch-action: manipulation; -webkit-tap-highlight-colo
 }
 /* Admin table: keep short buttons on one line. */
 td button, .thumb-actions label, .thumb-actions button { white-space: nowrap; }
+
+/* ---------- smoother on Safari / iPad ---------- */
+/* Rays are a pre-painted image that only rotates (no live mask or conic gradient each frame). */
+.rays { background: none center / 100% 100% no-repeat; -webkit-mask: none; mask: none; will-change: transform; }
+.reveal.opened .rays { animation: rays-spin 14s linear infinite; }
+@keyframes rays-spin { from { transform: scale(1) rotate(0deg); } to { transform: scale(1) rotate(360deg); } }
+/* Glass highlight without a blur filter. */
+.dome::after { filter: none; background: radial-gradient(ellipse at center, rgba(255,255,255,.5), rgba(255,255,255,0) 70%); }
+.dome, .big-cap, .cap-out, .knob { will-change: transform; }
+.prize-card.out .pic { filter: none; opacity: .45; }
