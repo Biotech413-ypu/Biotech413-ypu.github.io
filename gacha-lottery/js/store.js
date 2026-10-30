@@ -162,7 +162,7 @@
   const capsuleHtml = c => `<span class="capsule" style="--c:${c}"><span class="top"></span><span class="bot"></span></span>`;
   // Picture of a prize: an <img> filled from IndexedDB by hydrateImages(), or a capsule when there is none.
   const picHtml = (imageId, color, alt) => imageId
-    ? `<img data-img="${esc(imageId)}" data-fallback="${esc(color)}" alt="${esc(alt || '')}">`
+    ? `<img data-img="${esc(imageId)}" data-fallback="${esc(color)}" alt="${esc(alt || '')}" decoding="async">`
     : capsuleHtml(color);
   function hydrateImages(root) {
     root.querySelectorAll('img[data-img]').forEach(async img => {
